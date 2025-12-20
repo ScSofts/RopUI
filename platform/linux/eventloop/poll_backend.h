@@ -1,5 +1,5 @@
-#ifndef _ROP_POLL_PLATFORM_EVENTLOOP__BACKEND_H
-#define _ROP_POLL_PLATFORM_EVENTLOOP__BACKEND_H
+#ifndef _ROP_PLATFORM_POLL_EVENTLOOP_BACKEND_H
+#define _ROP_PLATFORM_POLL_EVENTLOOP_BACKEND_H
 
 #include <vector>
 #include <functional>
@@ -7,6 +7,7 @@
 #include <poll.h>
 
 #include "../../eventloop_core.h"
+
 
 namespace RopEventloop::Linux {
 
@@ -85,4 +86,4 @@ private:
 
 }
 
-#endif // _ROP_POLL_PLATFORM_EVENTLOOP__BACKEND_H
+#endif // _ROP_PLATFORM_POLL_EVENTLOOP_BACKEND_H
