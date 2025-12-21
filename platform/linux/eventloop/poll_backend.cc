@@ -46,12 +46,12 @@ PollEventSource::asPollEvent(const void* raw_event) const {
 
 PollBackend::PollBackend() = default;
 
-void PollBackend::addSource(IEventSource* /*source*/) {
+void PollBackend::addSource(IEventSource*) {
     // 幂等：PollBackend 不需要在这里做任何事
     // source 的实际 fd 注册由 source->arm() 完成
 }
 
-void PollBackend::removeSource(IEventSource* /*source*/) {
+void PollBackend::removeSource(IEventSource*) {
     // 幂等：source->disarm() 应该已经清理了 fd
 }
 
@@ -131,13 +131,13 @@ PollEventLoopCore::PollEventLoopCore()
 }
 
 
-SocketEventSource::SocketEventSource(int fd,
+PollSocketEventSource::PollSocketEventSource(int fd,
                                      short events,
                                      Callback cb)
     : PollEventSource(fd, events),
       callback_(std::move(cb)) {}
 
-void SocketEventSource::dispatch(const void* raw_event) {
+void PollSocketEventSource::dispatch(const void* raw_event) {
     const PollRawEvent* ev = asPollEvent(raw_event);
 
     if (callback_) {

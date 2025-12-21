@@ -1,6 +1,9 @@
 set(ROPUI_PLATFORM_LINUX_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/eventloop/poll_backend.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/eventloop/epoll_backend.cc
 )
+
+
 
 set(ROPUI_PLATFORM_LINUX_SOURCES
     ${ROPUI_PLATFORM_LINUX_SOURCES}

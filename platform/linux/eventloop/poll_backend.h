@@ -70,11 +70,11 @@ public:
 };
 
 
-class SocketEventSource final : public PollEventSource {
+class PollSocketEventSource final : public PollEventSource {
 public:
     using Callback = std::function<void(short revents)>;
 
-    SocketEventSource(int fd,
+    PollSocketEventSource(int fd,
                       short events,
                       Callback cb);
 
