@@ -7,6 +7,11 @@
 
 namespace RopEventloop {
 
+enum class BackendType {
+    LINUX_POLL,
+    LINUX_EPOLL
+};
+
 struct RawEventSpan {
     const void* data;
     size_t count;
@@ -17,7 +22,9 @@ class IEventSource;
 class IEventCoreBackend;
 
 class IEventCoreBackend {
+    BackendType type_;
 public:
+    IEventCoreBackend(BackendType type) : type_(type) {}
     virtual ~IEventCoreBackend() = default;
 
     virtual void addSource(IEventSource* source) = 0;
@@ -29,7 +36,10 @@ public:
 };
 
 class IEventSource {
+protected:
+    BackendType type_;
 public:
+    IEventSource(BackendType type) : type_(type) {};
     virtual ~IEventSource() = default;
 
     virtual void arm(IEventCoreBackend& backend) = 0;
