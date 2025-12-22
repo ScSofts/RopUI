@@ -1,6 +1,7 @@
 set(ROPUI_PLATFORM_LINUX_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/schedule/poll_backend.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/schedule/epoll_backend.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/schedule/watcher/epoll_wakeup.cc
 )
 
 

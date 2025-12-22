@@ -102,6 +102,7 @@ void EpollBackend::wait(int timeout) {
                          epoll_events_.data(),
                          static_cast<int>(epoll_events_.size()),
                          timeout);
+        // LOG(DEBUG)("epoll wait one loop");
     } while (n < 0 && errno == EINTR);
 
     if (n <= 0) return;

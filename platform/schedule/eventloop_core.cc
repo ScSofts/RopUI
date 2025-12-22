@@ -2,6 +2,7 @@
 
 #include <log.hpp>
 #include "eventloop_core.h"
+#include "linux/schedule/epoll_backend.h"
 
 namespace RopEventloop {
 
@@ -9,6 +10,7 @@ IEventLoopCore::IEventLoopCore(std::unique_ptr<IEventCoreBackend> backend)
     : backend_(std::move(backend)) {}
 
 void IEventLoopCore::addSource(std::unique_ptr<IEventSource> source) {
+    LOG(DEBUG)("source add to core");
     IEventSource* raw = source.get();
     sources_.push_back(std::move(source));
     pending_add_.push_back(raw);
@@ -19,8 +21,9 @@ void IEventLoopCore::removeSource(IEventSource* source) {
 }
 
 void IEventLoopCore::runOnce(int timeout) {
-    LOG(DEBUG)("event loop iteration started");
+    // LOG(DEBUG)("event loop core iteration started");
     backend_->wait(timeout);
+    // LOG(DEBUG)("event loop core after waited");
     dispatchRawEvents();
     applyPendingChanges();
 }
@@ -34,7 +37,7 @@ void IEventLoopCore::dispatchRawEvents() {
 
     RawEventSpan span = backend_->rawEvents();
     const char* base = static_cast<const char*>(span.data);
-
+    // LOG(DEBUG)("span.count: %d", span.count);
     for (size_t i = 0; i < span.count; ++i) {
         const void* ev = base + i * span.stride;
 
