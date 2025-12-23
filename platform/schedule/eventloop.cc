@@ -73,6 +73,7 @@ void EventLoop::detachSource(IEventSource* source) {
 }
 
 void EventLoop::run() {
+    core_->applyInitialChanges();
     while (!exitRequested()) {
         int timeout_ms = computeTimeoutMs();
         core_->runOnce(timeout_ms);

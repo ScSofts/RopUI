@@ -56,6 +56,7 @@ void EpollBackend::addSource(IEventSource*) {}
 void EpollBackend::removeSource(IEventSource*) {}
 
 void EpollBackend::registerFd(int fd, uint32_t events) {
+    LOG(DEBUG)("registering fd %d with events 0x%04x", fd, events);
     auto it = fd_events_.find(fd);
 
     epoll_event ev{};

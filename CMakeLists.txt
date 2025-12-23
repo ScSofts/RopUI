@@ -7,23 +7,28 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 set(EXPORT_COMPILE_COMMANDS ON)
 
+option(ROPUI_BUILD_WAYLAND "Build wayland" ON)
 option(ROPUI_BUILD_EXAMPLES "Build examples" ON)
 
 add_subdirectory(deps)
 # add_subdirectory(graphic)
 add_subdirectory(platform)
 add_subdirectory(utils)
-# add_subdirectory(vg)
+add_subdirectory(vg)
 
 add_library(ropui STATIC)
 
 target_sources(ropui PRIVATE
     $<TARGET_OBJECTS:ropui_platform>
+    $<TARGET_OBJECTS:vg>
     $<TARGET_OBJECTS:glad>
 )
 
 target_include_directories(ropui
     PUBLIC
+        ${PROJECT_BINARY_DIR}/platform
+        ${PROJECT_SOURCE_DIR}/deps/glad/include
+        ${PROJECT_SOURCE_DIR}/vg/nanovg
         ${PROJECT_SOURCE_DIR}
 )
 
