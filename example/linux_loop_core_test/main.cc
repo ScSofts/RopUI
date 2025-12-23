@@ -59,8 +59,8 @@ public:
         }
     }
 
-    void addSource(std::unique_ptr<IEventSource> source) {
-        core_->addSource(std::move(source));
+    void addSource(IEventSource* source) {
+        core_->addSource(source);
     }
 
     void requestExit() {
@@ -198,8 +198,8 @@ int main(int argc, char** argv) {
             }
         });
 
-    loop.addSource(std::move(srcA));
-    loop.addSource(std::move(srcB));
+    loop.addSource(srcA.get());
+    loop.addSource(srcB.get());
 
     /* ---------- Sender Thread ---------- */
 

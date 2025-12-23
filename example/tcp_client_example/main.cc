@@ -1,4 +1,5 @@
 #include "log.hpp"
+#include "platform/schedule/eventloop_core.h"
 #include <arpa/inet.h>
 #include <fcntl.h>
 #include <sys/socket.h>
@@ -43,16 +44,14 @@ public:
         createSocket();
         startConnect();
         createSource();
-        attachSource(std::move(source_));
+        attachSource(source_.get());
         attached_ = true;
-
-        // ⭐ 关键：attach 后立刻检查一次 connect 结果
         checkConnectResult();
     }
 
     void stop() override {
         if (attached_) {
-            detachSource(source_raw_);
+            detachSource(source_.get());
             attached_ = false;
         }
         if (fd_ >= 0) {
@@ -104,15 +103,12 @@ private:
     }
 
     void createSource() {
-        auto src = std::make_unique<EpollReadinessEventSource>(
+        source_ = std::make_unique<EpollReadinessEventSource>(
             fd_,
             EPOLLIN | EPOLLOUT | EPOLLERR | EPOLLHUP,
             [this](uint32_t events) {
                 onReady(events);
             });
-
-        source_raw_ = src.get();
-        source_ = std::move(src);
     }
 
     void checkConnectResult() {
@@ -159,10 +155,6 @@ private:
         }
     }
 
-    void updateReadingSource() {
-
-    }
-
     void sendRequest() {
         std::string req =
             "GET " + path_ + " HTTP/1.1\r\n"
@@ -171,7 +163,6 @@ private:
 
         LOG(INFO)("send request:\n%s", req.c_str());
         ::send(fd_, req.data(), req.size(), 0);
-        updateReadingSource();
 
         state_ = State::Reading;
     }
@@ -214,8 +205,6 @@ private:
     bool attached_{false};
 
     State state_{State::Connecting};
-
-    IEventSource* source_raw_{nullptr};
     std::unique_ptr<IEventSource> source_;
 
     std::string response_;

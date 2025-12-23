@@ -23,7 +23,6 @@ private:
 
     bool attached_{false};
 
-    IEventSource* source_raw_{nullptr};
     std::unique_ptr<IEventSource> source_;
 };
 

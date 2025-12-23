@@ -67,7 +67,7 @@ public:
 
 protected:
     // Source management - Watcher-only.
-    void attachSource(std::unique_ptr<IEventSource> source);
+    void attachSource(IEventSource* source);
     void detachSource(IEventSource* source);
 
 private:
@@ -118,8 +118,8 @@ protected:
     explicit IWatcher(EventLoop& loop)
         : loop_(loop) {}
 
-    void attachSource(std::unique_ptr<IEventSource> src) {
-        loop_.attachSource(std::move(src));
+    void attachSource(IEventSource* src) {
+        loop_.attachSource(src);
     }
 
     void detachSource(IEventSource* src) {

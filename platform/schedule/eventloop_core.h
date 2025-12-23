@@ -66,7 +66,7 @@ public:
     }
     void runOnce(int timeout = -1);
     
-    void addSource(std::unique_ptr<IEventSource> source);
+    void addSource(IEventSource* source);
     void removeSource(IEventSource* source);
     
 protected:
@@ -79,7 +79,7 @@ private:
 private:
     std::unique_ptr<IEventCoreBackend> backend_;
 
-    std::vector<std::unique_ptr<IEventSource>> sources_;
+    std::vector<IEventSource*> sources_;
     std::vector<IEventSource*> pending_add_;
     std::vector<IEventSource*> pending_remove_;
 

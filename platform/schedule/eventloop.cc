@@ -3,6 +3,7 @@
 #include <utility>
 
 #include "linux/schedule/watcher/epoll_wakeup.h"
+#include "linux/schedule/watcher/poll_wakeup.h"
 #include "schedule/eventloop_core.h"
 
 
@@ -22,6 +23,8 @@ EventLoop::EventLoop(BackendType backend_type)
         wakeup_ = std::make_unique<Linux::EpollWakeUpWatcher>(*this);
         break;
     case BackendType::LINUX_POLL:
+        wakeup_ = std::make_unique<Linux::PollWakeUpWatcher>(*this);
+        break;
     default:
         throw std::runtime_error("Linux::EventLoop: unknown backend");
     }
@@ -62,9 +65,9 @@ void EventLoop::requestExit() {
     if (wakeup_) wakeup_->notify();
 }
 
-void EventLoop::attachSource(std::unique_ptr<IEventSource> source) {
+void EventLoop::attachSource(IEventSource* source) {
     if (!source) return;
-    core_->addSource(std::move(source));
+    core_->addSource(source);
 }
 
 void EventLoop::detachSource(IEventSource* source) {

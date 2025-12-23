@@ -2,18 +2,16 @@
 
 #include <log.hpp>
 #include "eventloop_core.h"
-#include "linux/schedule/epoll_backend.h"
 
 namespace RopEventloop {
 
 IEventLoopCore::IEventLoopCore(std::unique_ptr<IEventCoreBackend> backend)
     : backend_(std::move(backend)) {}
 
-void IEventLoopCore::addSource(std::unique_ptr<IEventSource> source) {
+void IEventLoopCore::addSource(IEventSource* source) {
     LOG(DEBUG)("source add to core");
-    IEventSource* raw = source.get();
-    sources_.push_back(std::move(source));
-    pending_add_.push_back(raw);
+    sources_.push_back(source);
+    pending_add_.push_back(source);
 }
 
 void IEventLoopCore::removeSource(IEventSource* source) {
@@ -70,8 +68,8 @@ void IEventLoopCore::applyPendingChanges() {
         auto it = std::remove_if(
             sources_.begin(),
             sources_.end(),
-            [src](const std::unique_ptr<IEventSource>& p) {
-                return p.get() == src;
+            [src](const IEventSource* p) {
+                return p == src;
             });
 
         sources_.erase(it, sources_.end());

@@ -25,6 +25,7 @@ EpollWakeUpWatcher::EpollWakeUpWatcher(EventLoop& loop)
 
 EpollWakeUpWatcher::~EpollWakeUpWatcher() {
     stop();
+    // remove from watcher for memory safe
 
     if (wakeup_fd_ >= 0) {
         ::close(wakeup_fd_);
@@ -33,16 +34,16 @@ EpollWakeUpWatcher::~EpollWakeUpWatcher() {
 }
 
 void EpollWakeUpWatcher::start() {
-    if (attached_) return;
+    if (attached_) return; // can only attach to one eventloop core
 
-    attachSource(std::move(source_));
+    attachSource(source_.get());
     attached_ = true;
 }
 
 void EpollWakeUpWatcher::stop() {
     if (!attached_) return;
 
-    detachSource(source_raw_);
+    detachSource(source_.get());
     attached_ = false;
 }
 
@@ -55,7 +56,7 @@ void EpollWakeUpWatcher::notify() {
 }
 
 void EpollWakeUpWatcher::createSource() {
-    auto src = std::make_unique<EpollReadinessEventSource>(
+    source_ = std::make_unique<EpollReadinessEventSource>(
         wakeup_fd_,
         EPOLLIN,
         [this](uint32_t events) {
@@ -66,9 +67,6 @@ void EpollWakeUpWatcher::createSource() {
                 // drain
             }
         });
-
-    source_raw_ = src.get();
-    source_ = std::move(src);
 }
 
 }
