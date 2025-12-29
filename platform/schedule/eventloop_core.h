@@ -4,6 +4,7 @@
 #include <memory>
 #include <vector>
 #include <cstddef>
+#include <mutex>
 
 namespace RopHive {
 
@@ -81,6 +82,7 @@ private:
 private:
     std::unique_ptr<IEventCoreBackend> backend_;
 
+    std::mutex mu_;
     std::vector<IEventSource*> sources_;
     std::vector<IEventSource*> pending_add_;
     std::vector<IEventSource*> pending_remove_;
