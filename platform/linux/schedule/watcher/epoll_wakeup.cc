@@ -8,7 +8,7 @@
 
 #include "../epoll_backend.h"
 
-namespace RopEventloop::Linux {
+namespace RopHive::Linux {
 
 
 EpollWakeUpWatcher::EpollWakeUpWatcher(EventLoop& loop)

@@ -10,8 +10,8 @@
 #include <platform/schedule/eventloop.h>
 #include <log.hpp>
 
-using namespace RopEventloop;
-using namespace RopEventloop::Linux;
+using namespace RopHive;
+using namespace RopHive::Linux;
 
 /*
  * SimpleHttpClient

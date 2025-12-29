@@ -8,7 +8,7 @@
 #include "schedule/eventloop_core.h"
 
 
-namespace RopEventloop::MacOS {
+namespace RopHive::MacOS {
 
 PollEventSource::PollEventSource(int fd, short events)
     : IEventSource(BackendType::MACOS_POLL), fd_(fd), events_(events) {}

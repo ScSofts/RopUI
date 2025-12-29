@@ -30,11 +30,11 @@
     #define DEFAULT_BACKENDTYPE BackendType::MACOS_KQUEUE
 #endif
 
-namespace RopEventloop {
+namespace RopHive {
 
-static std::unique_ptr<RopEventloop::IEventLoopCore>
+static std::unique_ptr<RopHive::IEventLoopCore>
 createEventLoopCore(BackendType type) {
-    using namespace RopEventloop;
+    using namespace RopHive;
 
     switch (type) {
     #ifdef __linux__
@@ -89,7 +89,7 @@ protected:
     void detachSource(IEventSource* source);
 
 private:
-    friend class ::RopEventloop::IWatcher;
+    friend class ::RopHive::IWatcher;
 
     struct TimerTask {
         TimePoint deadline;

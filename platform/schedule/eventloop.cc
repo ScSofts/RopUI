@@ -14,7 +14,7 @@
 #include "schedule/eventloop_core.h"
 
 
-namespace RopEventloop {
+namespace RopHive {
 
 EventLoop::EventLoop(BackendType backend_type)
     : backend_type_(backend_type),

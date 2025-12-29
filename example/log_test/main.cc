@@ -22,7 +22,7 @@ int main() {
 }
 
 void more_test_code() {
-    using namespace RopEventloop;
+    using namespace RopHive;
 
     EventLoop loop(BackendType::MACOS_POLL);
 

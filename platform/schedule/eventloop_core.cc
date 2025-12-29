@@ -3,7 +3,7 @@
 #include <log.hpp>
 #include "eventloop_core.h"
 
-namespace RopEventloop {
+namespace RopHive {
 
 IEventLoopCore::IEventLoopCore(std::unique_ptr<IEventCoreBackend> backend)
     : backend_(std::move(backend)) {}

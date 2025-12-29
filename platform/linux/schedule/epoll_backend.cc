@@ -7,7 +7,7 @@
 #include "epoll_backend.h"
 #include "schedule/eventloop_core.h"
 
-namespace RopEventloop::Linux {
+namespace RopHive::Linux {
 
 EpollEventSource::EpollEventSource(int fd, uint32_t events)
     : IEventSource(BackendType::LINUX_EPOLL), fd_(fd), events_(events) {}

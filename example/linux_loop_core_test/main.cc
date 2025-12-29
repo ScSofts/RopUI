@@ -13,7 +13,7 @@
 #include <platform/linux/schedule/poll_backend.h>
 #include <platform/linux/schedule/epoll_backend.h>
 
-using namespace RopEventloop;
+using namespace RopHive;
 
 /* ================= Backend Selection ================= */
 
@@ -34,7 +34,7 @@ static const char* backendName(LocalBackendType type) {
 
 static std::unique_ptr<IEventLoopCore>
 createEventLoopCore(LocalBackendType type) {
-    using namespace RopEventloop::Linux;
+    using namespace RopHive::Linux;
 
     switch (type) {
     case LocalBackendType::Poll:
@@ -97,7 +97,7 @@ createSocketSource(
     short interest,
     std::function<void(short)> user_cb) {
 
-    using namespace RopEventloop::Linux;
+    using namespace RopHive::Linux;
 
     switch (type) {
     case LocalBackendType::Poll:

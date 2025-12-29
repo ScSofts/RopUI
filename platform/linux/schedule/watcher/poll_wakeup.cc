@@ -8,7 +8,7 @@
 
 #include "../poll_backend.h"
 
-namespace RopEventloop::Linux {
+namespace RopHive::Linux {
 
 
 PollWakeUpWatcher::PollWakeUpWatcher(EventLoop& loop)

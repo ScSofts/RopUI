@@ -7,7 +7,7 @@
 
 #include "../../schedule/eventloop_core.h"
 
-namespace RopEventloop::Linux {
+namespace RopHive::Linux {
 
 struct EpollRawEvent {
     int fd;

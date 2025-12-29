@@ -5,7 +5,7 @@
 #include <unistd.h>
 #include "../../../schedule/eventloop.h"
 
-namespace RopEventloop::MacOS {
+namespace RopHive::MacOS {
 
 class PollWakeUpWatcher final : public IWakeUpWatcher {
 public:

@@ -8,7 +8,7 @@
 
 #include "../poll_backend.h"
 
-namespace RopEventloop::MacOS {
+namespace RopHive::MacOS {
 
 PollWakeUpWatcher::PollWakeUpWatcher(EventLoop& loop)
     : IWakeUpWatcher(loop) {

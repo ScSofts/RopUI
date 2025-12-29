@@ -4,7 +4,7 @@
 #include <memory>
 #include "../../../schedule/eventloop.h"
 
-namespace RopEventloop::Linux {
+namespace RopHive::Linux {
 
 class EpollWakeUpWatcher final : public IWakeUpWatcher {
 public:

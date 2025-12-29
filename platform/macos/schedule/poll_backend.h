@@ -9,7 +9,7 @@
 #include "../../schedule/eventloop_core.h"
 
 
-namespace RopEventloop::MacOS {
+namespace RopHive::MacOS {
 
 struct PollRawEvent {
     int fd;

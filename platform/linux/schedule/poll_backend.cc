@@ -8,7 +8,7 @@
 #include "schedule/eventloop_core.h"
 
 
-namespace RopEventloop::Linux {
+namespace RopHive::Linux {
 
 PollEventSource::PollEventSource(int fd, short events)
     : IEventSource(BackendType::LINUX_POLL), fd_(fd), events_(events) {}

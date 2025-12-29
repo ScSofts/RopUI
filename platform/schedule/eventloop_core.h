@@ -5,7 +5,7 @@
 #include <vector>
 #include <cstddef>
 
-namespace RopEventloop {
+namespace RopHive {
 
 enum class BackendType {
     LINUX_POLL,

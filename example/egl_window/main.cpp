@@ -9,8 +9,8 @@
 #include <nanovg.h>
 #include <nanovg_gl.h>
 
-using namespace RopEventloop;
-using namespace RopEventloop::Linux;
+using namespace RopHive;
+using namespace RopHive::Linux;
 
 static void render(NVGcontext* vg, float w, float h, bool is_red) {
     nvgBeginFrame(vg, w, h, 1.0f);
