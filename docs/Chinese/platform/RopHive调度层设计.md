@@ -45,7 +45,7 @@ RopTask 具有及其庞大的复杂性，在 EventLoop 里，他只是简单的�
 
 hive 可以解除除了主线程 worker 以外的任何一个 worker，但不负责其中 task 的回收，并且可以在运行过程中新建 worker
 
-## 2 Worker (蜜蜂)
+## 2. Worker (蜜蜂)
 
 蜂巢内的最小调度单元，每个 Worker 绑定一个系统线程。Worker 之间具有全等性，他们是一个通用的执行容器，各自持有一个 EventLoopCore，可以用类似 EventLoop 的方法，将裸的 EventSource 绑定到 EventLoopCore 中，因此 Worker 持有的 EventLoopCore 才决定了其性质。
 
