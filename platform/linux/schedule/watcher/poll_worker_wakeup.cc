@@ -63,4 +63,4 @@ void PollWorkerWakeUpWatcher::createSource() {
 
 } // namespace RopHive::Linux
 
-#endif
+#endif // __linux__

@@ -73,4 +73,4 @@ void PollWakeUpWatcher::createSource() {
 
 }
 
-#endif
+#endif // __linux__
