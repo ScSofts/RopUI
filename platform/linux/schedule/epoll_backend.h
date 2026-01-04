@@ -1,6 +1,8 @@
 #ifndef _ROP_PLATFORM_LINUX_EPOLL_EVENTLOOP_BACKEND_H
 #define _ROP_PLATFORM_LINUX_EPOLL_EVENTLOOP_BACKEND_H
 
+#ifdef __linux__
+
 #include <vector>
 #include <functional>
 #include <unordered_map>
@@ -81,5 +83,7 @@ private:
 };
 
 }
+
+#endif // __linux__
 
 #endif // _ROP_PLATFORM_LINUX_EPOLL_EVENTLOOP_BACKEND_H

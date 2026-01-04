@@ -1,3 +1,4 @@
+#ifdef __linux__
 
 #include <unistd.h>
 #include <errno.h>
@@ -137,3 +138,5 @@ void EpollReadinessEventSource::dispatch(const void* raw_event) {
 }
 
 }
+
+#endif // __linux__

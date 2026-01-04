@@ -1,6 +1,8 @@
 #ifndef _ROP_PLATFORM_LINUX_POLL_WORKER_WAKEUP_H
 #define _ROP_PLATFORM_LINUX_POLL_WORKER_WAKEUP_H
 
+#ifdef __linux__
+
 #include <memory>
 
 #include "../../../schedule/worker_watcher.h"
@@ -27,5 +29,6 @@ private:
 
 } // namespace RopHive::Linux
 
-#endif // _ROP_PLATFORM_LINUX_POLL_WORKER_WAKEUP_H
+#endif // __linux__
 
+#endif // _ROP_PLATFORM_LINUX_POLL_WORKER_WAKEUP_H

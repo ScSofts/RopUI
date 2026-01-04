@@ -1,5 +1,7 @@
 #include "epoll_wakeup.h"
 
+#ifdef __linux__
+
 #include <sys/eventfd.h>
 #include <unistd.h>
 #include <cerrno>
@@ -70,3 +72,5 @@ void EpollWakeUpWatcher::createSource() {
 }
 
 }
+
+#endif // __linux__

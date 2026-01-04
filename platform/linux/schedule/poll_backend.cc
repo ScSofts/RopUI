@@ -1,3 +1,5 @@
+#ifdef __linux__
+
 #include <cassert>
 #include <errno.h>
 #include <cstring>
@@ -161,3 +163,5 @@ void PollReadinessEventSource::dispatch(const void* raw_event) {
 }
 
 }
+
+#endif

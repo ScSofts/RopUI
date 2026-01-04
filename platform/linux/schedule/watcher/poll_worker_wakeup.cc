@@ -1,5 +1,7 @@
 #include "poll_worker_wakeup.h"
 
+#ifdef __linux__
+
 #include <sys/eventfd.h>
 #include <unistd.h>
 #include <cerrno>
@@ -61,3 +63,4 @@ void PollWorkerWakeUpWatcher::createSource() {
 
 } // namespace RopHive::Linux
 
+#endif

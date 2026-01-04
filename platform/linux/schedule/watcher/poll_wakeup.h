@@ -1,6 +1,8 @@
 #ifndef _ROP_PLATFORM_LINUX_EPOLL_WATCHER_POLL_WAKEUP_H
 #define _ROP_PLATFORM_LINUX_EPOLL_WATCHER_POLL_WAKEUP_H
 
+#ifdef __linux__
+
 #include <memory>
 #include "../../../schedule/eventloop.h"
 
@@ -28,5 +30,7 @@ private:
 
 
 }
+
+#endif // __linux__
 
 #endif // _ROP_PLATFORM_LINUX_EPOLL_WATCHER_POLL_WAKEUP_H
