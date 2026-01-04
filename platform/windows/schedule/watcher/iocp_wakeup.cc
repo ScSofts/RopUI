@@ -6,7 +6,7 @@
 
 namespace RopHive::Windows {
 
-static constexpr ULONG_PTR kWakeKey = 0xC0DEC0DE;
+static constexpr ULONG_PTR kWakeKey = 0xC0DEC0DE; // unused key, can ignore
 
 IocpWakeUpWatcher::IocpWakeUpWatcher(EventLoop& loop)
     : IWakeUpWatcher(loop) {

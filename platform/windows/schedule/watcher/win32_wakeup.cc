@@ -7,7 +7,7 @@
 namespace RopHive::Windows {
 
 // Use an application-defined message as a wakeup poke.
-static constexpr UINT kWakeMsg = WM_USER + 100;
+static constexpr UINT kWakeMsg = WM_USER + 100; // unused key, can ignore
 
 Win32WakeUpWatcher::Win32WakeUpWatcher(EventLoop& loop)
     : IWakeUpWatcher(loop) {

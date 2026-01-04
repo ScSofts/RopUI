@@ -31,7 +31,6 @@ void IocpEventSource::disarm(IEventCoreBackend& backend) {
     }
     armed_ = false;
     backend_ = nullptr;
-    (void)backend;
 }
 
 bool IocpEventSource::matches(const void* raw_event) const {
@@ -132,6 +131,7 @@ IocpWakeUpEventSource::IocpWakeUpEventSource(ULONG_PTR key)
 
 void IocpWakeUpEventSource::dispatch(const void* raw_event) {
     (void)raw_event;
+    // this "wakeup" do without callback, so here we do nothing
 }
 
 void IocpWakeUpEventSource::notify() {

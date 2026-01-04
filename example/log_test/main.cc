@@ -24,7 +24,7 @@ int main() {
 void more_test_code() {
     using namespace RopHive;
 
-    EventLoop loop(BackendType::WINDOWS_IOCP);
+    EventLoop loop(BackendType::WINDOWS_WIN32);
 
     loop.postDelayed([&](){
         LOG(INFO)("This is an info message. 1");

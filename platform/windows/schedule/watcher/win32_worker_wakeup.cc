@@ -4,7 +4,7 @@
 
 namespace RopHive::Windows {
 
-static constexpr UINT kWakeMsg = WM_USER + 101;
+static constexpr UINT kWakeMsg = WM_USER + 101; // unused key, can ignore
 
 Win32WorkerWakeUpWatcher::Win32WorkerWakeUpWatcher(IOWorker& worker)
     : IWorkerWakeUpWatcher(worker) {}
