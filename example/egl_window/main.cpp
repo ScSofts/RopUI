@@ -59,18 +59,18 @@ public:
 
     void start() override {
         int fd = wl_display_get_fd(wl_.display);
-        source_ = std::make_unique<PollReadinessEventSource>(fd, POLLIN, [this](uint32_t) {
+        source_ = std::make_shared<PollReadinessEventSource>(fd, POLLIN, [this](uint32_t) {
           LOG(INFO)("event get! %d", test_a++); 
           this->handleEvents();
         });
-        attachSource(source_.get());
+        attachSource(source_);
         draw(); 
         prepareRead();
     }
 
     void stop() override {
         if (source_) {
-            detachSource(source_.get());
+            detachSource(source_);
             source_.reset();
         }
     }
@@ -120,7 +120,7 @@ private:
 
     WLContext& wl_; EGLContextWl& egl_; NVGcontext* vg_;
     bool is_red_ = false;
-    std::unique_ptr<IEventSource> source_;
+    std::shared_ptr<IEventSource> source_;
 };
 
 int main() {

@@ -8,15 +8,17 @@ namespace RopHive {
 IEventLoopCore::IEventLoopCore(std::unique_ptr<IEventCoreBackend> backend)
     : backend_(std::move(backend)) {}
 
-void IEventLoopCore::addSource(IEventSource* source) {
+void IEventLoopCore::addSource(std::shared_ptr<IEventSource> source) {
+    if (!source) return;
     LOG(DEBUG)("source add to core");
     std::lock_guard<std::mutex> lock(mu_);
-    pending_add_.push_back(source);
+    pending_add_.push_back(std::move(source));
 }
 
-void IEventLoopCore::removeSource(IEventSource* source) {
+void IEventLoopCore::removeSource(std::shared_ptr<IEventSource> source) {
+    if (!source) return;
     std::lock_guard<std::mutex> lock(mu_);
-    pending_remove_.push_back(source);
+    pending_remove_.push_back(std::move(source));
 }
 
 void IEventLoopCore::runOnce(int timeout) {
@@ -36,7 +38,7 @@ void IEventLoopCore::dispatchRawEvents() {
 
     RawEventSpan span = backend_->rawEvents();
     const char* base = static_cast<const char*>(span.data);
-    std::vector<IEventSource*> sources_snapshot;
+    std::vector<std::shared_ptr<IEventSource>> sources_snapshot;
     {
         std::lock_guard<std::mutex> lock(mu_);
         sources_snapshot = sources_;
@@ -46,7 +48,7 @@ void IEventLoopCore::dispatchRawEvents() {
         const void* ev = base + i * span.stride;
 
         for (auto& src : sources_snapshot) {
-            if (src->matches(ev)) {
+            if (src && src->matches(ev)) {
                 src->dispatch(ev);
                 break;
             }
@@ -61,30 +63,32 @@ void IEventLoopCore::applyPendingChanges() {
         return;
     }
 
-    std::vector<IEventSource*> pending_add;
-    std::vector<IEventSource*> pending_remove;
+    std::vector<std::shared_ptr<IEventSource>> pending_add;
+    std::vector<std::shared_ptr<IEventSource>> pending_remove;
     {
         std::lock_guard<std::mutex> lock(mu_);
         pending_add.swap(pending_add_);
         pending_remove.swap(pending_remove_);
     }
 
-    for (IEventSource* src : pending_add) {
-        backend_->addSource(src);
+    for (auto& src : pending_add) {
+        if (!src) continue;
+        backend_->addSource(src.get());
         src->arm(*backend_);
         
-        sources_.push_back(src);
+        sources_.push_back(std::move(src));
     }
 
-    for (IEventSource* src : pending_remove) {
+    for (auto& src : pending_remove) {
+        if (!src) continue;
         src->disarm(*backend_);
-        backend_->removeSource(src);
+        backend_->removeSource(src.get());
 
         auto it = std::remove_if(
             sources_.begin(),
             sources_.end(),
-            [src](const IEventSource* p) {
-                return p == src;
+            [&src](const std::shared_ptr<IEventSource>& p) {
+                return p && p.get() == src.get();
             });
         sources_.erase(it, sources_.end());
     }

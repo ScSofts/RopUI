@@ -1,6 +1,8 @@
 #ifndef _ROP_PLATFORM_ROPHIVE_WORKER_WATCHER_H
 #define _ROP_PLATFORM_ROPHIVE_WORKER_WATCHER_H
 
+#include <memory>
+
 namespace RopHive {
 
 class IOWorker;
@@ -19,8 +21,8 @@ protected:
     explicit IWorkerWatcher(IOWorker& worker)
         : worker_(worker) {}
 
-    void attachSource(IEventSource* src);
-    void detachSource(IEventSource* src);
+    void attachSource(std::shared_ptr<IEventSource> src);
+    void detachSource(std::shared_ptr<IEventSource> src);
 
 protected:
     IOWorker& worker_;

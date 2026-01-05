@@ -137,19 +137,19 @@ std::optional<IOWorker::TaskFn> IOWorker::tryStealTop() {
     return local_dq_.tryStealTop();
 }
 
-void IOWorker::attachSource(IEventSource* source) {
-    if (!initialized_ || !core_ || source == nullptr) {
+void IOWorker::attachSource(std::shared_ptr<IEventSource> source) {
+    if (!initialized_ || !core_ || !source) {
         return;
     }
-    core_->addSource(source);
+    core_->addSource(std::move(source));
     core_->applyInitialChanges();
 }
 
-void IOWorker::detachSource(IEventSource* source) {
-    if (!initialized_ || !core_ || source == nullptr) {
+void IOWorker::detachSource(std::shared_ptr<IEventSource> source) {
+    if (!initialized_ || !core_ || !source) {
         return;
     }
-    core_->removeSource(source);
+    core_->removeSource(std::move(source));
     core_->applyInitialChanges();
 }
 

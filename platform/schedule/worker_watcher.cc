@@ -4,13 +4,12 @@
 
 namespace RopHive {
 
-void IWorkerWatcher::attachSource(IEventSource* src) {
-    worker_.attachSource(src);
+void IWorkerWatcher::attachSource(std::shared_ptr<IEventSource> src) {
+    worker_.attachSource(std::move(src));
 }
 
-void IWorkerWatcher::detachSource(IEventSource* src) {
-    worker_.detachSource(src);
+void IWorkerWatcher::detachSource(std::shared_ptr<IEventSource> src) {
+    worker_.detachSource(std::move(src));
 }
 
 } // namespace RopHive
-

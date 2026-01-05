@@ -42,14 +42,14 @@ public:
         createSocket();
         startConnect();
         createSource();
-        attachSource(source_.get());
+        attachSource(source_);
         attached_ = true;
         checkConnectResult();
     }
 
     void stop() override {
         if (attached_) {
-            detachSource(source_.get());
+            detachSource(source_);
             attached_ = false;
         }
         if (fd_ >= 0) {
@@ -101,7 +101,7 @@ private:
     }
 
     void createSource() {
-        source_ = std::make_unique<EpollReadinessEventSource>(
+        source_ = std::make_shared<EpollReadinessEventSource>(
             fd_,
             EPOLLIN | EPOLLOUT | EPOLLERR | EPOLLHUP,
             [this](uint32_t events) {
@@ -203,7 +203,7 @@ private:
     bool attached_{false};
 
     State state_{State::Connecting};
-    std::unique_ptr<IEventSource> source_;
+    std::shared_ptr<IEventSource> source_;
 
     std::string response_;
 };

@@ -72,8 +72,8 @@ public:
     }
     void runOnce(int timeout = -1);
     
-    void addSource(IEventSource* source);
-    void removeSource(IEventSource* source);
+    void addSource(std::shared_ptr<IEventSource> source);
+    void removeSource(std::shared_ptr<IEventSource> source);
     
 protected:
     explicit IEventLoopCore(std::unique_ptr<IEventCoreBackend> backend);
@@ -86,9 +86,9 @@ private:
     std::unique_ptr<IEventCoreBackend> backend_;
 
     std::mutex mu_;
-    std::vector<IEventSource*> sources_;
-    std::vector<IEventSource*> pending_add_;
-    std::vector<IEventSource*> pending_remove_;
+    std::vector<std::shared_ptr<IEventSource>> sources_;
+    std::vector<std::shared_ptr<IEventSource>> pending_add_;
+    std::vector<std::shared_ptr<IEventSource>> pending_remove_;
 
     bool in_dispatch_ = false;
 };

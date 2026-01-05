@@ -9,6 +9,8 @@
 
 namespace RopHive::Linux {
 
+struct PollWorkerWakeUpState;
+
 class PollWorkerWakeUpWatcher final : public IWorkerWakeUpWatcher {
 public:
     explicit PollWorkerWakeUpWatcher(IOWorker& worker);
@@ -22,9 +24,9 @@ private:
     void createSource();
 
 private:
-    int wakeup_fd_{-1};
+    std::shared_ptr<PollWorkerWakeUpState> state_;
     bool attached_{false};
-    std::unique_ptr<IEventSource> source_;
+    std::shared_ptr<IEventSource> source_;
 };
 
 } // namespace RopHive::Linux

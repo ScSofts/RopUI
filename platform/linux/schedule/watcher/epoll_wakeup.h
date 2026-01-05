@@ -8,6 +8,8 @@
 
 namespace RopHive::Linux {
 
+struct EpollWakeUpState;
+
 class EpollWakeUpWatcher final : public IWakeUpWatcher {
 public:
     explicit EpollWakeUpWatcher(EventLoop& loop);
@@ -21,11 +23,11 @@ private:
     void createSource();
 
 private:
-    int wakeup_fd_{-1};
+    std::shared_ptr<EpollWakeUpState> state_;
 
     bool attached_{false};
 
-    std::unique_ptr<IEventSource> source_;
+    std::shared_ptr<IEventSource> source_;
 };
 
 

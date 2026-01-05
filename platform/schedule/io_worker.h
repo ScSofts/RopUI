@@ -107,8 +107,8 @@ public:
 protected:
     friend class ::RopHive::IWorkerWatcher;
 
-    void attachSource(IEventSource* source);
-    void detachSource(IEventSource* source);
+    void attachSource(std::shared_ptr<IEventSource> source);
+    void detachSource(std::shared_ptr<IEventSource> source);
 
 private:
     struct TimerTask {

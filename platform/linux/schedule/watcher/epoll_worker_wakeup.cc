@@ -12,10 +12,22 @@
 
 namespace RopHive::Linux {
 
+struct EpollWorkerWakeUpState {
+    int fd{-1};
+
+    ~EpollWorkerWakeUpState() {
+        if (fd >= 0) {
+            ::close(fd);
+            fd = -1;
+        }
+    }
+};
+
 EpollWorkerWakeUpWatcher::EpollWorkerWakeUpWatcher(IOWorker& worker)
     : IWorkerWakeUpWatcher(worker) {
-    wakeup_fd_ = ::eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
-    if (wakeup_fd_ < 0) {
+    state_ = std::make_shared<EpollWorkerWakeUpState>();
+    state_->fd = ::eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
+    if (state_->fd < 0) {
         throw std::runtime_error(
             std::string("eventfd failed: ") + std::strerror(errno));
     }
@@ -24,39 +36,40 @@ EpollWorkerWakeUpWatcher::EpollWorkerWakeUpWatcher(IOWorker& worker)
 
 EpollWorkerWakeUpWatcher::~EpollWorkerWakeUpWatcher() {
     stop();
-    if (wakeup_fd_ >= 0) {
-        ::close(wakeup_fd_);
-        wakeup_fd_ = -1;
-    }
+    source_.reset();
+    state_.reset();
 }
 
 void EpollWorkerWakeUpWatcher::start() {
     if (attached_) return;
-    attachSource(source_.get());
+    attachSource(source_);
     attached_ = true;
 }
 
 void EpollWorkerWakeUpWatcher::stop() {
     if (!attached_) return;
-    detachSource(source_.get());
+    detachSource(source_);
     attached_ = false;
 }
 
 void EpollWorkerWakeUpWatcher::notify() {
-    if (wakeup_fd_ < 0) return;
+    if (!state_ || state_->fd < 0) return;
     uint64_t one = 1;
-    const ssize_t n = ::write(wakeup_fd_, &one, sizeof(one));
+    const ssize_t n = ::write(state_->fd, &one, sizeof(one));
     (void)n;
 }
 
 void EpollWorkerWakeUpWatcher::createSource() {
-    source_ = std::make_unique<EpollReadinessEventSource>(
-        wakeup_fd_,
+    auto state = state_;
+    source_ = std::make_shared<EpollReadinessEventSource>(
+        state ? state->fd : -1,
         EPOLLIN,
-        [this](uint32_t events) {
+        [state](uint32_t events) {
             if (!(events & EPOLLIN)) return;
             uint64_t value = 0;
-            while (::read(wakeup_fd_, &value, sizeof(value)) > 0) {
+            const int fd = state ? state->fd : -1;
+            if (fd < 0) return;
+            while (::read(fd, &value, sizeof(value)) > 0) {
             }
         });
 }

@@ -10,7 +10,7 @@ static constexpr ULONG_PTR kWakeKey = 0xC0DEC0DF; // unused key, can ignore
 
 IocpWorkerWakeUpWatcher::IocpWorkerWakeUpWatcher(IOWorker& worker)
     : IWorkerWakeUpWatcher(worker) {
-    source_ = std::make_unique<IocpWakeUpEventSource>(kWakeKey);
+    source_ = std::make_shared<IocpWakeUpEventSource>(kWakeKey);
 }
 
 IocpWorkerWakeUpWatcher::~IocpWorkerWakeUpWatcher() {
@@ -19,13 +19,13 @@ IocpWorkerWakeUpWatcher::~IocpWorkerWakeUpWatcher() {
 
 void IocpWorkerWakeUpWatcher::start() {
     if (attached_) return;
-    attachSource(source_.get());
+    attachSource(source_);
     attached_ = true;
 }
 
 void IocpWorkerWakeUpWatcher::stop() {
     if (!attached_) return;
-    detachSource(source_.get());
+    detachSource(source_);
     attached_ = false;
 }
 

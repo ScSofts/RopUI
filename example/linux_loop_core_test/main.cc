@@ -59,8 +59,8 @@ public:
         }
     }
 
-    void addSource(IEventSource* source) {
-        core_->addSource(source);
+    void addSource(std::shared_ptr<IEventSource> source) {
+        core_->addSource(std::move(source));
     }
 
     void requestExit() {
@@ -90,7 +90,7 @@ static short epollToPoll(uint32_t events) {
     return r;
 }
 
-static std::unique_ptr<IEventSource>
+static std::shared_ptr<IEventSource>
 createSocketSource(
     LocalBackendType type,
     int fd,
@@ -101,13 +101,13 @@ createSocketSource(
 
     switch (type) {
     case LocalBackendType::Poll:
-        return std::make_unique<PollReadinessEventSource>(
+        return std::make_shared<PollReadinessEventSource>(
             fd,
             interest,
             std::move(user_cb));
 
     case LocalBackendType::Epoll:
-        return std::make_unique<EpollReadinessEventSource>(
+        return std::make_shared<EpollReadinessEventSource>(
             fd,
             /* epoll interest */ interest,
             [cb = std::move(user_cb)](uint32_t epoll_events) {
@@ -198,8 +198,8 @@ int main(int argc, char** argv) {
             }
         });
 
-    loop.addSource(srcA.get());
-    loop.addSource(srcB.get());
+    loop.addSource(srcA);
+    loop.addSource(srcB);
 
     /* ---------- Sender Thread ---------- */
 

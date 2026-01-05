@@ -12,12 +12,23 @@
 
 namespace RopHive::Linux {
 
+struct PollWakeUpState {
+    int fd{-1};
+
+    ~PollWakeUpState() {
+        if (fd >= 0) {
+            ::close(fd);
+            fd = -1;
+        }
+    }
+};
 
 PollWakeUpWatcher::PollWakeUpWatcher(EventLoop& loop)
     : IWakeUpWatcher(loop) {
 
-    wakeup_fd_ = ::eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
-    if (wakeup_fd_ < 0) {
+    state_ = std::make_shared<PollWakeUpState>();
+    state_->fd = ::eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
+    if (state_->fd < 0) {
         throw std::runtime_error(
             std::string("eventfd failed: ") + std::strerror(errno));
     }
@@ -29,43 +40,44 @@ PollWakeUpWatcher::~PollWakeUpWatcher() {
     stop();
     // remove from watcher for memory safe
 
-    if (wakeup_fd_ >= 0) {
-        ::close(wakeup_fd_);
-        wakeup_fd_ = -1;
-    }
+    source_.reset();
+    state_.reset();
 }
 
 void PollWakeUpWatcher::start() {
     if (attached_) return; // can only attach to one eventloop core
 
-    attachSource(source_.get());
+    attachSource(source_);
     attached_ = true;
 }
 
 void PollWakeUpWatcher::stop() {
     if (!attached_) return;
 
-    detachSource(source_.get());
+    detachSource(source_);
     attached_ = false;
 }
 
 void PollWakeUpWatcher::notify() {
-    if (wakeup_fd_ < 0) return;
+    if (!state_ || state_->fd < 0) return;
 
     uint64_t one = 1;
-    ssize_t n = ::write(wakeup_fd_, &one, sizeof(one));
+    ssize_t n = ::write(state_->fd, &one, sizeof(one));
     (void)n; // ignore EAGAIN
 }
 
 void PollWakeUpWatcher::createSource() {
-    source_ = std::make_unique<PollReadinessEventSource>(
-        wakeup_fd_,
+    auto state = state_;
+    source_ = std::make_shared<PollReadinessEventSource>(
+        state ? state->fd : -1,
         POLLIN,
-        [this](uint32_t events) {
+        [state](uint32_t events) {
             if (!(events & POLLIN)) return;
 
             uint64_t value = 0;
-            while (::read(wakeup_fd_, &value, sizeof(value)) > 0) {
+            const int fd = state ? state->fd : -1;
+            if (fd < 0) return;
+            while (::read(fd, &value, sizeof(value)) > 0) {
                 // drain
             }
         });

@@ -102,14 +102,14 @@ void EventLoop::requestExit() {
     if (wakeup_) wakeup_->notify();
 }
 
-void EventLoop::attachSource(IEventSource* source) {
+void EventLoop::attachSource(std::shared_ptr<IEventSource> source) {
     if (!source) return;
-    core_->addSource(source);
+    core_->addSource(std::move(source));
 }
 
-void EventLoop::detachSource(IEventSource* source) {
+void EventLoop::detachSource(std::shared_ptr<IEventSource> source) {
     if (!source) return;
-    core_->removeSource(source);
+    core_->removeSource(std::move(source));
 }
 
 void EventLoop::run() {

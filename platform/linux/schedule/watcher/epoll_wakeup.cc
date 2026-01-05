@@ -12,12 +12,23 @@
 
 namespace RopHive::Linux {
 
+struct EpollWakeUpState {
+    int fd{-1};
+
+    ~EpollWakeUpState() {
+        if (fd >= 0) {
+            ::close(fd);
+            fd = -1;
+        }
+    }
+};
 
 EpollWakeUpWatcher::EpollWakeUpWatcher(EventLoop& loop)
     : IWakeUpWatcher(loop) {
 
-    wakeup_fd_ = ::eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
-    if (wakeup_fd_ < 0) {
+    state_ = std::make_shared<EpollWakeUpState>();
+    state_->fd = ::eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
+    if (state_->fd < 0) {
         throw std::runtime_error(
             std::string("eventfd failed: ") + std::strerror(errno));
     }
@@ -28,44 +39,44 @@ EpollWakeUpWatcher::EpollWakeUpWatcher(EventLoop& loop)
 EpollWakeUpWatcher::~EpollWakeUpWatcher() {
     stop();
     // remove from watcher for memory safe
-
-    if (wakeup_fd_ >= 0) {
-        ::close(wakeup_fd_);
-        wakeup_fd_ = -1;
-    }
+    source_.reset();
+    state_.reset();
 }
 
 void EpollWakeUpWatcher::start() {
     if (attached_) return; // can only attach to one eventloop core
 
-    attachSource(source_.get());
+    attachSource(source_);
     attached_ = true;
 }
 
 void EpollWakeUpWatcher::stop() {
     if (!attached_) return;
 
-    detachSource(source_.get());
+    detachSource(source_);
     attached_ = false;
 }
 
 void EpollWakeUpWatcher::notify() {
-    if (wakeup_fd_ < 0) return;
+    if (!state_ || state_->fd < 0) return;
 
     uint64_t one = 1;
-    ssize_t n = ::write(wakeup_fd_, &one, sizeof(one));
+    ssize_t n = ::write(state_->fd, &one, sizeof(one));
     (void)n; // ignore EAGAIN
 }
 
 void EpollWakeUpWatcher::createSource() {
-    source_ = std::make_unique<EpollReadinessEventSource>(
-        wakeup_fd_,
+    auto state = state_;
+    source_ = std::make_shared<EpollReadinessEventSource>(
+        state ? state->fd : -1,
         EPOLLIN,
-        [this](uint32_t events) {
+        [state](uint32_t events) {
             if (!(events & EPOLLIN)) return;
 
             uint64_t value;
-            while (::read(wakeup_fd_, &value, sizeof(value)) > 0) {
+            const int fd = state ? state->fd : -1;
+            if (fd < 0) return;
+            while (::read(fd, &value, sizeof(value)) > 0) {
                 // drain
             }
         });

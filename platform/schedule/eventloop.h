@@ -101,8 +101,8 @@ public:
 
 protected:
     // Source management - Watcher-only.
-    void attachSource(IEventSource* source);
-    void detachSource(IEventSource* source);
+    void attachSource(std::shared_ptr<IEventSource> source);
+    void detachSource(std::shared_ptr<IEventSource> source);
 
 private:
     friend class ::RopHive::IWatcher;
@@ -152,12 +152,12 @@ protected:
     explicit IWatcher(EventLoop& loop)
         : loop_(loop) {}
 
-    void attachSource(IEventSource* src) {
-        loop_.attachSource(src);
+    void attachSource(std::shared_ptr<IEventSource> src) {
+        loop_.attachSource(std::move(src));
     }
 
-    void detachSource(IEventSource* src) {
-        loop_.detachSource(src);
+    void detachSource(std::shared_ptr<IEventSource> src) {
+        loop_.detachSource(std::move(src));
     }
 
 protected:
