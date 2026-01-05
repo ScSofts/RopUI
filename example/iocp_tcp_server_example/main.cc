@@ -107,10 +107,10 @@ public:
 
         // 绑定监听 Socket 到调度器
         LOG(INFO)("Binding listen socket to event loop");
-        accept_source_ = std::make_unique<IocpHandleCompletionEventSource>(
+        accept_source_ = std::make_shared<IocpHandleCompletionEventSource>(
             (HANDLE)listen_socket_, reinterpret_cast<ULONG_PTR>(this),
             [this](const IocpRawEvent& ev) { handleAcceptEvent(ev); });
-        attachSource(accept_source_.get());
+        attachSource(accept_source_);
 
         LOG(INFO)("Starting initial accept request");
         postNewAccept();
@@ -122,7 +122,7 @@ public:
         
         if (accept_source_) {
             LOG(INFO)("Detaching accept event source");
-            detachSource(accept_source_.get());
+            detachSource(accept_source_);
             accept_source_.reset();
         }
         if (listen_socket_ != INVALID_SOCKET) {
@@ -133,7 +133,7 @@ public:
         // 清理所有客户端
         LOG(INFO)("Cleaning up %zu connected clients", client_sources_.size());
         for (auto& pair : client_sources_) {
-            detachSource(pair.second.get());
+            detachSource(pair.second);
         }
         client_sources_.clear();
         clients_map_.clear();
@@ -201,9 +201,8 @@ private:
             (HANDLE)client->socket, reinterpret_cast<ULONG_PTR>(client.get()),
             [this, client](const IocpRawEvent& e) { handleClientEvent(client, e); });
         
-        auto* source_ptr = source.get();
+        attachSource(std::move(source));
         client_sources_[client.get()] = std::move(source);
-        attachSource(source_ptr);
 
         // 4. 处理随 Accept 一起送达的首包数据
         if (!initial_data.empty()) {
@@ -290,7 +289,7 @@ private:
         LOG(INFO)("Removing client #%d, remaining clients: %zu", ptr->client_id, client_sources_.size() - 1);
         
         if (client_sources_.count(ptr)) {
-            detachSource(client_sources_[ptr].get());
+            detachSource(client_sources_[ptr]);
             client_sources_.erase(ptr);
         }
         clients_map_.erase(ptr);
@@ -300,8 +299,8 @@ private:
     SOCKET listen_socket_;
     LPFN_ACCEPTEX lpfnAcceptEx_ = nullptr;
     std::map<ClientContext*, std::shared_ptr<ClientContext>> clients_map_;
-    std::map<ClientContext*, std::unique_ptr<IocpHandleCompletionEventSource>> client_sources_;
-    std::unique_ptr<IocpHandleCompletionEventSource> accept_source_;
+    std::map<ClientContext*, std::shared_ptr<IocpHandleCompletionEventSource>> client_sources_;
+    std::shared_ptr<IocpHandleCompletionEventSource> accept_source_;
     int next_id_ = 1;
 };
 
