@@ -19,7 +19,8 @@ using namespace RopHive::Linux;
  * - One-shot HTTP GET client
  * - Correct non-blocking connect state machine
  */
-class SimpleHttpClient final : public IWatcher {
+class SimpleHttpClient final : public IWatcher,
+                               public std::enable_shared_from_this<SimpleHttpClient> {
 public:
     using ResponseCallback = std::function<void(const std::string&)>;
 
@@ -44,7 +45,7 @@ public:
         createSource();
         attachSource(source_);
         attached_ = true;
-        checkConnectResult();
+        // checkConnectResult();
     }
 
     void stop() override {
@@ -101,11 +102,14 @@ private:
     }
 
     void createSource() {
+        auto weak_self = weak_from_this();
         source_ = std::make_shared<EpollReadinessEventSource>(
             fd_,
             EPOLLIN | EPOLLOUT | EPOLLERR | EPOLLHUP,
-            [this](uint32_t events) {
-                onReady(events);
+            [weak_self](uint32_t events) {
+                if (auto self = weak_self.lock()) {
+                    self->onReady(events);
+                }
             });
     }
 
@@ -122,9 +126,12 @@ private:
 
         if (err == 0) {
             LOG(DEBUG)("connect completed (SO_ERROR == 0)");
-            loop_.post([=](){ 
-                this->state_ = State::Sending;
-                sendRequest();
+            auto weak_self = weak_from_this();
+            loop_.post([weak_self]() {
+                if (auto self = weak_self.lock()) {
+                    self->state_ = State::Sending;
+                    self->sendRequest();
+                }
             });
         }
     }
@@ -215,7 +222,7 @@ int main() {
 
     EventLoop loop(BackendType::LINUX_EPOLL);
 
-    SimpleHttpClient client(
+    auto client = std::make_shared<SimpleHttpClient>(
         loop,
         "127.0.0.1",
         8080,
@@ -226,7 +233,7 @@ int main() {
             loop.requestExit();
         });
 
-    client.start();
+    client->start();
     loop.run();
     return 0;
 }
