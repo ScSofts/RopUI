@@ -1,4 +1,4 @@
-#include "poll_wakeup.h"
+#include "poll_worker_wakeup.h"
 
 #include <memory>
 #include <unistd.h>
@@ -11,18 +11,18 @@
 
 namespace RopHive::MacOS {
 
-struct PollWakeUpState {
+struct PollWorkerWakeUpState {
     int pipe_fds_[2]{-1, -1};
     
-    ~PollWakeUpState() {
+    ~PollWorkerWakeUpState() {
         if (pipe_fds_[0] >= 0) ::close(pipe_fds_[0]);
         if (pipe_fds_[1] >= 0) ::close(pipe_fds_[1]);
     }
 };
 
-PollWakeUpWatcher::PollWakeUpWatcher(EventLoop& loop)
-    : IWakeUpWatcher(loop) {
-    state_ = std::shared_ptr<PollWakeUpState>();
+PollWorkerWakeUpWatcher::PollWorkerWakeUpWatcher(IOWorker& worker)
+    : IWorkerWakeUpWatcher(worker) {
+    state_ = std::shared_ptr<PollWorkerWakeUpState>();
     if (::pipe(state_->pipe_fds_) < 0) {
         throw std::runtime_error(
             std::string("pipe failed: ") + std::strerror(errno));
@@ -34,26 +34,26 @@ PollWakeUpWatcher::PollWakeUpWatcher(EventLoop& loop)
     createSource();
 }
 
-PollWakeUpWatcher::~PollWakeUpWatcher() {
+PollWorkerWakeUpWatcher::~PollWorkerWakeUpWatcher() {
     stop();
 
     source_.reset();
     state_.reset(); 
 }
 
-void PollWakeUpWatcher::start() {
+void PollWorkerWakeUpWatcher::start() {
     if (attached_) return;
     attachSource(source_);
     attached_ = true;
 }
 
-void PollWakeUpWatcher::stop() {
+void PollWorkerWakeUpWatcher::stop() {
     if (!attached_) return;
     detachSource(source_);
     attached_ = false;
 }
 
-void PollWakeUpWatcher::notify() {
+void PollWorkerWakeUpWatcher::notify() {
     if (state_ && state_->pipe_fds_[1] < 0) return;
 
     char one = 1;
@@ -61,7 +61,7 @@ void PollWakeUpWatcher::notify() {
     (void)n;
 }
 
-void PollWakeUpWatcher::createSource() {
+void PollWorkerWakeUpWatcher::createSource() {
     auto state = state_;
     source_ = std::make_shared<PollReadinessEventSource>(
         state ? state->pipe_fds_[0] : -1,

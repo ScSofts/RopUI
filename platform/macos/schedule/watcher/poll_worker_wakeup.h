@@ -3,16 +3,16 @@
 
 #include <memory>
 #include <unistd.h>
-#include "../../../schedule/eventloop.h"
+#include "../../../schedule/worker_watcher.h"
 
 namespace RopHive::MacOS {
 
-struct PollWakeUpState;
+struct PollWorkerWakeUpState;
 
-class PollWakeUpWatcher final : public IWakeUpWatcher {
+class PollWorkerWakeUpWatcher final : public IWorkerWakeUpWatcher {
 public:
-    explicit PollWakeUpWatcher(EventLoop& loop);
-    ~PollWakeUpWatcher() override;
+    explicit PollWorkerWakeUpWatcher(IOWorker& worker);
+    ~PollWorkerWakeUpWatcher() override;
 
     void start() override;
     void stop() override;
@@ -22,7 +22,7 @@ private:
     void createSource();
 
 private:
-    std::shared_ptr<PollWakeUpState> state_;
+    std::shared_ptr<PollWorkerWakeUpState> state_;
     bool attached_{false};
     std::shared_ptr<IEventSource> source_;
 };
