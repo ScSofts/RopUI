@@ -43,3 +43,5 @@
 # middle product files
 /build
 .cache
+example/cocoa_metal_bad_apple/bad_apple_data.h
+example/cocoa_metal_bad_apple/bad_apple_frames.bin
