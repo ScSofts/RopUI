@@ -31,7 +31,7 @@ void KqueueEventSource::arm(IEventCoreBackend& backend) {
     }
     if (armed_) return;
     auto& kq = static_cast<KqueueBackend&>(backend);
-    kq.registerFd(fd_, filter_, flags_, fflags, data_);
+    kq.registerFd(fd_, filter_, flags_, fflags_, data_);
     armed_ = true;
 }
 
@@ -112,6 +112,7 @@ void KqueueBackend::wait(int timeout) {
     if (timeout >= 0) {
         ts.tv_sec = timeout / 1000;
         ts.tv_nsec = (timeout % 1000) * 1000000;
+        // will not up to int limit
         pts = &ts;
     }
 
