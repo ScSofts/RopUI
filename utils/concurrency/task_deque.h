@@ -26,6 +26,13 @@ public:
     std::optional<std::function<void()>> tryPopBottom();
     std::optional<std::function<void()>> tryStealTop();
 
+    struct DebugState {
+        size_t top;
+        size_t bottom;
+        size_t size;
+    };
+    DebugState debugState() const noexcept;
+
 private:
     static size_t roundUpPow2(size_t x);
 

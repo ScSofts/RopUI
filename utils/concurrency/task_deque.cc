@@ -119,4 +119,13 @@ std::optional<std::function<void()>> TaskDeque::tryStealTop() {
     return std::nullopt;
 }
 
+TaskDeque::DebugState TaskDeque::debugState() const noexcept {
+    // This is for diagnostics/logging only; it is not a linearizable snapshot.
+    return DebugState{
+        .top = top_.load(std::memory_order_relaxed),
+        .bottom = bottom_.load(std::memory_order_relaxed),
+        .size = size_.load(std::memory_order_relaxed),
+    };
+}
+
 } // namespace RopUI::Utils::Concurrency
