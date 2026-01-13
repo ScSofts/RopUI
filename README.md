@@ -1,9 +1,12 @@
 # RopUI
 Personal project about cpp multiplatform ui framework.
 
+# Completion
+- Mult-thread EventLoop(now supported Windows/Linux/MacOS)
+
 # TODO
-- EventLoop & async IO(starting...)
-- Linux Wayland & EGL Graphic Support
+- Linux Wayland & EGL Graphic Support(starting...)
+- VG support for linux
 
 # License
 The library is licensed under MIT license
