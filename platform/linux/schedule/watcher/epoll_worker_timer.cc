@@ -82,7 +82,7 @@ void EpollWorkerTimerWatcher::createSource() {
                 if (n == static_cast<ssize_t>(sizeof(expirations))) {
                     if (state->cb) {
                         for (uint64_t i = 0; i < expirations; ++i) {
-                            state->cb();
+                            if(state && state->cb) state->cb();
                         }
                     }
                     continue;
