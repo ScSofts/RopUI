@@ -28,6 +28,7 @@ void PollEventSource::arm(IEventCoreBackend& backend) {
     auto& poll_backend = static_cast<PollBackend&>(backend);
     poll_backend.registerFd(fd_, events_);
     armed_ = true;
+    backend_ = &backend;
 }
 
 void PollEventSource::disarm(IEventCoreBackend& backend) {
@@ -43,6 +44,14 @@ void PollEventSource::disarm(IEventCoreBackend& backend) {
     auto& poll_backend = static_cast<PollBackend&>(backend);
     poll_backend.unregisterFd(fd_);
     armed_ = false;
+    backend_ = nullptr;
+}
+
+void PollEventSource::setEvents(short events) {
+    events_ = events;
+    if (armed_ && backend_ && isSourceMatchBackend(backend_)) {
+        static_cast<PollBackend&>(*backend_).registerFd(fd_, events_);
+    }
 }
 
 bool PollEventSource::matches(const void* raw_event) const {

@@ -27,6 +27,8 @@ public:
 
     bool matches(const void* raw_event) const override;
 
+    void setEvents(uint32_t events);
+
 protected:
         int fd() const { return fd_; }
     short events() const { return events_; }
@@ -37,6 +39,7 @@ private:
     int fd_;
     uint32_t events_;
     bool armed_ = false;
+    IEventCoreBackend* backend_{nullptr};
 };
 
 class EpollBackend final : public IEventCoreBackend {
@@ -77,6 +80,7 @@ public:
                            Callback cb);
 
     void dispatch(const void* raw_event) override;
+    void setEvents(uint32_t events) { EpollEventSource::setEvents(events); }
 
 private:
     Callback callback_;

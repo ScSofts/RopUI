@@ -21,6 +21,7 @@ void EpollEventSource::arm(IEventCoreBackend& backend) {
     if (armed_) return;
     static_cast<EpollBackend&>(backend).registerFd(fd_, events_);
     armed_ = true;
+    backend_ = &backend;
 }
 
 void EpollEventSource::disarm(IEventCoreBackend& backend) {
@@ -31,6 +32,14 @@ void EpollEventSource::disarm(IEventCoreBackend& backend) {
     if (!armed_) return;
     static_cast<EpollBackend&>(backend).unregisterFd(fd_);
     armed_ = false;
+    backend_ = nullptr;
+}
+
+void EpollEventSource::setEvents(uint32_t events) {
+    events_ = events;
+    if (armed_ && backend_ && isSourceMatchBackend(backend_)) {
+        static_cast<EpollBackend&>(*backend_).registerFd(fd_, events_);
+    }
 }
 
 bool EpollEventSource::matches(const void* raw_event) const {
