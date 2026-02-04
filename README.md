@@ -2,10 +2,10 @@
 Personal project about cpp multiplatform ui framework.
 
 # Completion
-- Mult-thread EventLoop(now supported Windows/Linux/MacOS)
+- Mult-thread EventLoop(now supported Windows/Linux/MacOS) (optimizing...)
 
 # TODO
-- Linux Wayland & EGL Graphic Support(starting...)
+o pinux Wayland & EGL Graphic Support(starting...)
 - VG support for linux
 
 # License

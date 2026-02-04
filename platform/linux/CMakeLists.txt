@@ -3,8 +3,13 @@ set(ROPUI_PLATFORM_LINUX_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/schedule/epoll_backend.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/schedule/watcher/epoll_wakeup.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/schedule/watcher/epoll_worker_wakeup.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/schedule/watcher/epoll_worker_timer.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/schedule/watcher/poll_wakeup.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/schedule/watcher/poll_worker_wakeup.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/schedule/watcher/poll_worker_timer.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/network/watcher/tcp_accept_watcher.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/network/watcher/tcp_connect_watcher.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/network/watcher/tcp_connection_watcher.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/wayland/wayland_backend.cc
 )
 

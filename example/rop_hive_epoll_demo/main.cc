@@ -1,40 +1,46 @@
+#include "platform/linux/schedule/watcher/epoll_worker_timer.h"
 #include "platform/schedule/hive.h"
-#include "platform/schedule/compute_worker.h"
 #include "platform/schedule/io_worker.h"
+#include "platform/schedule/worker_watcher.h"
 
-#include <atomic>
 #include <iostream>
-#include <thread>
+#include <memory>
 
-using namespace std::chrono_literals;
+static uint64_t test_count = 0;
 
 int main() {
+    logger::setMinLevel(LogLevel::DEBUG);
     RopHive::Hive hive;
-    hive.attachIOWorker(std::make_shared<RopHive::IOWorker>(hive.options()));
-    hive.attachComputeWorker(std::make_shared<RopHive::ComputeWorker>(hive.options()));
+    auto worker = std::make_shared<RopHive::IOWorker>(hive.options());
+    hive.attachIOWorker(worker);
 
-    std::atomic<int> counter{0};
+    hive.postIO([]() {
+        auto* self = RopHive::IOWorker::currentWorker();
+        if (!self) return;
 
-    std::thread runner([&] { hive.run(); });
+        auto watcher_wp_box =
+            std::make_shared<std::weak_ptr<RopHive::Linux::EpollWorkerTimerWatcher>>();
+        auto cb = [watcher_wp_box]() {
+            std::cout << "postIO(timerfd) " << ++test_count << std::endl;
+            if (test_count < 5) return;
+            auto watcher = watcher_wp_box ? watcher_wp_box->lock() : nullptr;
+            if (!watcher) return;
+            watcher->clearItimerspec();
+            watcher->stop();
 
-    hive.postIO([&] {
-        counter.fetch_add(1, std::memory_order_relaxed);
-        std::cout << "micro task ran\n";
+            if (auto* w = RopHive::IOWorker::currentWorker()) {
+                w->releaseWatcher(watcher.get());
+            }
+        };
+
+        auto watcher = std::make_shared<RopHive::Linux::EpollWorkerTimerWatcher>(*self, std::move(cb));
+        *watcher_wp_box = watcher;
+        self->adoptWatcher(watcher);
+
+        watcher->setItimerspec(itimerspec{{1, 0}, {2, 0}});
+        watcher->start();
     });
 
-    hive.postDelayed([&] {
-        counter.fetch_add(10, std::memory_order_relaxed);
-        std::cout << "delayed task ran, requesting exit\n";
-        hive.requestExit();
-    }, 50ms);
-
-    hive.postCompute([&] {
-        counter.fetch_add(100, std::memory_order_relaxed);
-        std::cout << "compute task ran\n";
-    });
-
-    runner.join();
-
-    std::cout << "done, counter=" << counter.load(std::memory_order_relaxed) << "\n";
+    hive.run();
     return 0;
 }

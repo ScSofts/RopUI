@@ -1,13 +1,13 @@
-#include <arpa/inet.h>
-#include <sys/socket.h>
-#include <fcntl.h>
-#include <unistd.h>
-#include <cstring>
-#include <iostream>
 #include <memory>
 #include <string>
+#include <string_view>
+#include <utility>
+#include <iostream>
 
-#include <platform/schedule/eventloop.h>
+#include <platform/schedule/hive.h>
+#include <platform/schedule/io_worker.h>
+#include <platform/linux/network/watcher/tcp_connect_watcher.h>
+#include <platform/linux/network/watcher/tcp_connection_watcher.h>
 #include <log.hpp>
 
 using namespace RopHive;
@@ -19,145 +19,43 @@ using namespace RopHive::Linux;
  * - One-shot HTTP GET client
  * - Correct non-blocking connect state machine
  */
-class SimpleHttpClient final : public IWatcher,
-                               public std::enable_shared_from_this<SimpleHttpClient> {
+class SimpleHttpClient final : public std::enable_shared_from_this<SimpleHttpClient> {
 public:
     using ResponseCallback = std::function<void(const std::string&)>;
 
-    SimpleHttpClient(EventLoop& loop,
+    SimpleHttpClient(IOWorker& worker,
                      std::string host,
                      int port,
                      std::string path,
                      ResponseCallback cb)
-        : IWatcher(loop),
+        : worker_(worker),
           host_(std::move(host)),
           port_(port),
           path_(std::move(path)),
           cb_(std::move(cb)) {}
 
-    ~SimpleHttpClient() override {
-        stop();
-    }
-
-    void start() override {
-        createSocket();
-        startConnect();
-        createSource();
-        attachSource(source_);
-        attached_ = true;
-        // checkConnectResult();
-    }
-
-    void stop() override {
-        if (attached_) {
-            detachSource(source_);
-            attached_ = false;
-        }
-        if (fd_ >= 0) {
-            ::close(fd_);
-            fd_ = -1;
-        }
+    void start() {
+        auto self = shared_from_this();
+        connect_ = std::make_shared<EpollTcpConnectWatcher>(
+            worker_,
+            host_,
+            port_,
+            [self](int connected_fd) { self->onConnected(connected_fd); },
+            [self](int err) { self->finishWithError(err); });
+        connect_->start();
     }
 
 private:
-    enum class State {
-        Connecting,
-        Sending,
-        Reading,
-        Done,
-    };
-
-    void createSocket() {
-        fd_ = ::socket(AF_INET, SOCK_STREAM, 0);
-        if (fd_ < 0) {
-            perror("socket");
-            std::abort();
-        }
-
-        int flags = ::fcntl(fd_, F_GETFL, 0);
-        ::fcntl(fd_, F_SETFL, flags | O_NONBLOCK);
-    }
-
-    void startConnect() {
-        sockaddr_in addr{};
-        addr.sin_family = AF_INET;
-        addr.sin_port = htons(port_);
-
-        if (::inet_pton(AF_INET, host_.c_str(), &addr.sin_addr) != 1) {
-            std::cerr << "invalid address\n";
-            std::abort();
-        }
-
-        int rc = ::connect(fd_, reinterpret_cast<sockaddr*>(&addr), sizeof(addr));
-        if (rc == 0) {
-            LOG(INFO)("connect completed immediately");
-            state_ = State::Sending;
-        } else if (errno == EINPROGRESS) {
-            LOG(INFO)("connect in progress");
-            state_ = State::Connecting;
-        } else {
-            perror("connect");
-            std::abort();
-        }
-    }
-
-    void createSource() {
-        auto weak_self = weak_from_this();
-        source_ = std::make_shared<EpollReadinessEventSource>(
-            fd_,
-            EPOLLIN | EPOLLOUT | EPOLLERR | EPOLLHUP,
-            [weak_self](uint32_t events) {
-                if (auto self = weak_self.lock()) {
-                    self->onReady(events);
-                }
-            });
-    }
-
-    void checkConnectResult() {
-        if (state_ != State::Connecting) return;
-
-        int err = 0;
-        socklen_t len = sizeof(err);
-        if (::getsockopt(fd_, SOL_SOCKET, SO_ERROR, &err, &len) < 0) {
-            perror("getsockopt");
-            finish();
-            return;
-        }
-
-        if (err == 0) {
-            LOG(DEBUG)("connect completed (SO_ERROR == 0)");
-            auto weak_self = weak_from_this();
-            loop_.post([weak_self]() {
-                if (auto self = weak_self.lock()) {
-                    self->state_ = State::Sending;
-                    self->sendRequest();
-                }
-            });
-        }
-    }
-
-    void onReady(uint32_t events) {
-        if (events & (EPOLLERR | EPOLLHUP)) {
-            LOG(DEBUG)("EPOLLERR | EPOLLHUP");
-            finish();
-            return;
-        }
-
-        if (state_ == State::Connecting && (events & EPOLLOUT)) {
-            LOG(DEBUG)("EPOLLOUT");
-            checkConnectResult();
-        }
-
-        if (state_ == State::Sending && (events & EPOLLOUT)) {
-            LOG(DEBUG)("EPOLLOUT");
-            sendRequest();
-            state_ = State::Reading;
-        }
-
-        if (state_ == State::Reading && (events & EPOLLIN)) {
-            LOG(DEBUG)("EPOLLIN");
-            readResponse();
-        }
+    void onConnected(int connected_fd) {
+        auto self = shared_from_this();
+        conn_ = std::make_shared<EpollTcpConnectionWatcher>(
+            worker_,
+            connected_fd,
+            [self](std::string_view chunk) { self->onData(chunk); },
+            [self]() { self->finish(); },
+            [self](int err) { self->finishWithError(err); });
+        conn_->start();
+        sendRequest();
     }
 
     void sendRequest() {
@@ -167,51 +65,40 @@ private:
             "Connection: close\r\n\r\n";
 
         LOG(INFO)("send request:\n%s", req.c_str());
-        ::send(fd_, req.data(), req.size(), 0);
-
-        state_ = State::Reading;
+        if (conn_) {
+            conn_->send(req);
+            conn_->shutdownWrite();
+        }
     }
 
-    void readResponse() {
-        char buf[4096];
-        for (;;) {
-            ssize_t n = ::recv(fd_, buf, sizeof(buf), 0);
-            LOG(DEBUG)("data number %d", n);
-            if (n > 0) {
-                response_.append(buf, n);
-            } else if (n == 0) {
-                finish();
-                return;
-            } else {
-                if (errno == EAGAIN || errno == EWOULDBLOCK)
-                    return;
-                perror("recv");
-                finish();
-                return;
-            }
-        }
+    void onData(std::string_view chunk) {
+        response_.append(chunk.data(), chunk.size());
     }
 
     void finish() {
         LOG(DEBUG)("finish()");
-        if (state_ == State::Done) return;
-        state_ = State::Done;
+        if (done_) return;
+        done_ = true;
         if (cb_) cb_(response_);
-        stop();
+        connect_.reset();
+        conn_.reset();
+    }
+
+    void finishWithError(int err) {
+        LOG(WARN)("http client error: %d", err);
+        finish();
     }
 
 private:
+    IOWorker& worker_;
     std::string host_;
     int port_;
     std::string path_;
     ResponseCallback cb_;
 
-    int fd_{-1};
-    bool attached_{false};
-
-    State state_{State::Connecting};
-    std::shared_ptr<IEventSource> source_;
-
+    bool done_{false};
+    std::shared_ptr<EpollTcpConnectWatcher> connect_;
+    std::shared_ptr<EpollTcpConnectionWatcher> conn_;
     std::string response_;
 };
 
@@ -220,20 +107,27 @@ private:
 int main() {
     logger::setMinLevel(LogLevel::DEBUG);
 
-    EventLoop loop(BackendType::LINUX_EPOLL);
+    Hive::Options opt;
+    opt.io_backend = BackendType::LINUX_EPOLL;
 
-    auto client = std::make_shared<SimpleHttpClient>(
-        loop,
-        "127.0.0.1",
-        8080,
-        "/",
-        [&](const std::string& resp) {
-            std::cout << "=== response ===\n";
-            std::cout << resp << "\n";
-            loop.requestExit();
-        });
+    Hive hive(opt);
+    auto worker = std::make_shared<IOWorker>(opt);
+    hive.attachIOWorker(worker);
 
-    client->start();
-    loop.run();
+    hive.postToWorker(0, [worker, &hive]() {
+        auto client = std::make_shared<SimpleHttpClient>(
+            *worker,
+            "127.0.0.1",
+            8080,
+            "/",
+            [&](const std::string& resp) {
+                std::cout << "=== response ===\n";
+                std::cout << resp << "\n";
+                hive.requestExit();
+            });
+        client->start();
+    });
+
+    hive.run();
     return 0;
 }
