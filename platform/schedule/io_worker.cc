@@ -2,6 +2,7 @@
 
 #include <cerrno>
 #include <cstring>
+#include <algorithm>
 #include <limits>
 #include <stdexcept>
 #include <functional>
@@ -59,6 +60,27 @@ IOWorker::~IOWorker() {
         wakeup_->stop();
         wakeup_.reset();
     }
+    owned_watchers_.clear();
+}
+
+void IOWorker::adoptWatcher(std::shared_ptr<IWorkerWatcher> watcher) {
+    if (!watcher) return;
+    if (IOWorker::currentWorker() != this) {
+        throw std::runtime_error("IOWorker::adoptWatcher: must be called on the owner worker thread");
+    }
+    owned_watchers_.push_back(std::move(watcher));
+}
+
+void IOWorker::releaseWatcher(IWorkerWatcher* watcher) noexcept {
+    if (!watcher) return;
+    if (IOWorker::currentWorker() != this) {
+        return;
+    }
+    auto it = std::remove_if(
+        owned_watchers_.begin(),
+        owned_watchers_.end(),
+        [watcher](const std::shared_ptr<IWorkerWatcher>& p) { return p.get() == watcher; });
+    owned_watchers_.erase(it, owned_watchers_.end());
 }
 
 void IOWorker::bind(Hive& hive, size_t worker_id) {

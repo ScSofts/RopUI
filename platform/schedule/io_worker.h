@@ -105,6 +105,13 @@ public:
     bool isSleeping() const noexcept { return sleeping_.load(std::memory_order_acquire); }
     uint32_t timerApproxSize() const noexcept { return timer_count_.load(std::memory_order_acquire); }
 
+    // Watcher ownership:
+    // The event loop core only owns IEventSource objects; it does not own the watcher wrapper.
+    // To avoid forcing users to keep shared_ptrs alive manually, a worker can own watchers.
+    // These APIs must be called on the owner worker thread.
+    void adoptWatcher(std::shared_ptr<IWorkerWatcher> watcher);
+    void releaseWatcher(IWorkerWatcher* watcher) noexcept;
+
 protected:
     friend class ::RopHive::IWorkerWatcher;
 
@@ -149,6 +156,8 @@ private:
 
     std::atomic<bool> stop_requested_{false};
     std::atomic<bool> sleeping_{false};
+
+    std::vector<std::shared_ptr<IWorkerWatcher>> owned_watchers_;
 
     mutable std::mt19937 rng_;
 };
