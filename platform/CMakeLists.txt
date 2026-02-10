@@ -8,6 +8,8 @@ set(ROPUI_PLATFORM_SOURCES
     schedule/compute_worker.cc
     schedule/worker_watcher.cc
     schedule/sched_trace.cc
+    network/ip_endpoint.cc
+    network/watcher/tcp_watchers.cc
 )
 
 if (UNIX AND NOT APPLE)

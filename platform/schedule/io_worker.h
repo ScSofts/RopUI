@@ -104,6 +104,7 @@ public:
 
     bool isSleeping() const noexcept { return sleeping_.load(std::memory_order_acquire); }
     uint32_t timerApproxSize() const noexcept { return timer_count_.load(std::memory_order_acquire); }
+    BackendType backendType() const noexcept { return options_.io_backend; }
 
     // Watcher ownership:
     // The event loop core only owns IEventSource objects; it does not own the watcher wrapper.

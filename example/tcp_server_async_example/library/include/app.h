@@ -1,7 +1,6 @@
 #pragma once
 
 #include "asyncnet.h"
-#include "server_runner.h"
 
 // Business entry coroutine (keep this file clean).
 asyncnet::Task<void> async_main(asyncnet::Executor& accept_exec,
@@ -9,5 +8,6 @@ asyncnet::Task<void> async_main(asyncnet::Executor& accept_exec,
                           int worker_n,
                           std::shared_ptr<std::vector<std::shared_ptr<asyncnet::Executor>>> execs);
 
-#define ROPHIVE_ASYNC_MAIN \
-    int main(int argc, char** argv) { return ::tcp_server_async_example::run(argc, argv); }
+#define rophive_async_main int main(int argc, char** argv) \
+    { return ::tcp_server_async_example::run(argc, argv); } \
+    asyncnet::Task<void>

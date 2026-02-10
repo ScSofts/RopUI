@@ -1,113 +1,85 @@
-#include <arpa/inet.h>
-#include <fcntl.h>
-#include <netinet/in.h>
-#include <sys/socket.h>
-#include <unistd.h>
-
 #include <cerrno>
 #include <cstring>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 
 #include <log.hpp>
-#include <platform/linux/network/watcher/tcp_accept_watcher.h>
-#include <platform/linux/network/watcher/tcp_connection_watcher.h>
+#include <platform/network/ip_endpoint.h>
+#include <platform/network/watcher/tcp_watchers.h>
 #include <platform/schedule/hive.h>
 #include <platform/schedule/io_worker.h>
 
 using namespace RopHive;
-using namespace RopHive::Linux;
-
-static int makeListenSocket(int port) {
-    const int fd = ::socket(AF_INET, SOCK_STREAM, 0);
-    if (fd < 0) {
-        LOG(FATAL)("socket failed: %s", std::strerror(errno));
-        std::abort();
-    }
-
-    int yes = 1;
-    ::setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
-
-    const int flags = ::fcntl(fd, F_GETFL, 0);
-    ::fcntl(fd, F_SETFL, flags | O_NONBLOCK);
-
-    sockaddr_in addr{};
-    addr.sin_family = AF_INET;
-    addr.sin_addr.s_addr = htonl(INADDR_ANY);
-    addr.sin_port = htons(static_cast<uint16_t>(port));
-
-    if (::bind(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) < 0) {
-        LOG(FATAL)("bind failed: %s", std::strerror(errno));
-        ::close(fd);
-        std::abort();
-    }
-    if (::listen(fd, SOMAXCONN) < 0) {
-        LOG(FATAL)("listen failed: %s", std::strerror(errno));
-        ::close(fd);
-        std::abort();
-    }
-    return fd;
-}
-
-static std::string peerToString(int fd) {
-    sockaddr_in addr{};
-    socklen_t len = sizeof(addr);
-    if (::getpeername(fd, reinterpret_cast<sockaddr*>(&addr), &len) != 0) {
-        return "unknown";
-    }
-    char ip[INET_ADDRSTRLEN]{};
-    if (!::inet_ntop(AF_INET, &addr.sin_addr, ip, sizeof(ip))) {
-        std::snprintf(ip, sizeof(ip), "invalid");
-    }
-    return std::string(ip) + ":" + std::to_string(ntohs(addr.sin_port));
-}
+using namespace RopHive::Network;
 
 class EchoSession : public std::enable_shared_from_this<EchoSession> {
 public:
-    EchoSession(IOWorker& worker, int fd)
-        : worker_(worker), fd_(fd) {}
+    explicit EchoSession(IOWorker& worker)
+        : worker_(worker) {}
 
-    void bind(std::weak_ptr<EpollTcpConnectionWatcher> watcher_wp) {
+    void bind(std::weak_ptr<ITcpConnectionWatcher> watcher_wp) {
         watcher_wp_ = std::move(watcher_wp);
     }
 
-    void start() {
-        LOG(INFO)("accepted fd=%d peer=%s", fd_, peerToString(fd_).c_str());
+    void start(const ITcpStream& stream) {
+        LOG(INFO)("accepted peer=%s local=%s",
+                  ipPortToString(stream.peer).c_str(),
+                  ipPortToString(stream.local).c_str());
     }
 
     void onData(std::string_view data) {
-        LOG(DEBUG)("fd=%d recv %zu bytes", fd_, data.size());
+        LOG(DEBUG)("recv %zu bytes", data.size());
         LOG(INFO)("client payload:");
         LOG(INFO)("=== data begin ===\n%s", data.data());
         LOG(INFO)("=== data end ===");
-        
-        auto watcher = watcher_wp_.lock();
-        if (!watcher) return;
-        watcher->send(data);
+
+        pending_out_.append(data.data(), data.size());
+        flushSend();
     }
 
     void onClose() {
-        LOG(INFO)("fd=%d closed", fd_);
+        LOG(INFO)("connection closed");
     }
 
     void onError(int err) {
-        LOG(WARN)("fd=%d error=%d (%s)", fd_, err, std::strerror(err));
+        LOG(WARN)("connection error=%d (%s)", err, std::strerror(err));
+    }
+
+    void onSendReady() {
+        flushSend();
     }
 
 private:
+    void flushSend() {
+        if (pending_out_.empty()) return;
+        auto watcher = watcher_wp_.lock();
+        if (!watcher) return;
+
+        while (!pending_out_.empty()) {
+            auto res = watcher->trySend(pending_out_);
+            if (res.err != 0) {
+                return;
+            }
+            if (res.n > 0) {
+                pending_out_.erase(0, res.n);
+                continue;
+            }
+            if (res.would_block) {
+                return;
+            }
+            return;
+        }
+    }
+
     IOWorker& worker_;
-    int fd_{-1};
-    std::weak_ptr<EpollTcpConnectionWatcher> watcher_wp_;
+    std::weak_ptr<ITcpConnectionWatcher> watcher_wp_;
+    std::string pending_out_;
 };
 
 int main() {
     logger::setMinLevel(LogLevel::INFO);
-
-    constexpr int kPort = 8080;
-    const int listen_fd = makeListenSocket(kPort);
-    LOG(INFO)("tcp_server_example listening on 0.0.0.0:%d", kPort);
-
     Hive::Options opt;
     opt.io_backend = BackendType::LINUX_EPOLL;
 
@@ -115,29 +87,38 @@ int main() {
     auto worker = std::make_shared<IOWorker>(opt);
     hive.attachIOWorker(worker);
 
-    hive.postToWorker(0, [worker, listen_fd]() {
+    hive.postToWorker(0, [worker]() {
         auto* self = IOWorker::currentWorker();
         if (!self) return;
 
-        auto accept = std::make_shared<EpollTcpAcceptWatcher>(
+        TcpAcceptOption acc_opt;
+        acc_opt.local = parseIpEndpoint("0.0.0.0:8000").value();
+        acc_opt.fill_endpoints = true;
+        acc_opt.set_close_on_exec = true;
+        acc_opt.reuse_addr = true;
+        acc_opt.tcp_no_delay = true;
+
+        LOG(INFO)("tcp_server_example listening on %s", ipPortToString(acc_opt.local).c_str());
+        auto accept = createTcpAcceptWatcher(
             *worker,
-            listen_fd,
-            [worker](int client_fd) {
+            acc_opt,
+            [worker](std::unique_ptr<ITcpStream> stream) {
                 auto* self = IOWorker::currentWorker();
                 if (!self) return;
+                if (!stream) return;
 
                 auto watcher_wp_box =
-                    std::make_shared<std::weak_ptr<EpollTcpConnectionWatcher>>();
-                auto session = std::make_shared<EchoSession>(*worker, client_fd);
+                    std::make_shared<std::weak_ptr<ITcpConnectionWatcher>>();
+                auto session = std::make_shared<EchoSession>(*worker);
+                session->start(*stream);
 
-                auto on_data = [session](std::string_view data) { session->onData(data); };
-                auto on_close = [session]() { session->onClose(); };
-                auto on_error = [session](int err) { session->onError(err); };
+                TcpConnectionOption conn_opt;
 
-                auto watcher = std::make_shared<EpollTcpConnectionWatcher>(
+                auto watcher = createTcpConnectionWatcher(
                     *worker,
-                    client_fd,
-                    std::move(on_data),
+                    conn_opt,
+                    std::move(stream),
+                    [session](std::string_view data) { session->onData(data); },
                     [watcher_wp_box, session]() {
                         session->onClose();
                         if (auto* w = IOWorker::currentWorker()) {
@@ -153,11 +134,11 @@ int main() {
                                 w->releaseWatcher(watcher.get());
                             }
                         }
-                    });
+                    },
+                    [session]() { session->onSendReady(); });
 
                 *watcher_wp_box = watcher;
                 session->bind(*watcher_wp_box);
-                session->start();
 
                 self->adoptWatcher(watcher);
                 watcher->start();
@@ -169,6 +150,5 @@ int main() {
     });
 
     hive.run();
-    ::close(listen_fd);
     return 0;
 }

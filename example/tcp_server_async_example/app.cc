@@ -1,4 +1,5 @@
 #include "app.h"
+#include "server_runner.h"
 
 #include <algorithm>
 #include <atomic>
@@ -12,7 +13,7 @@
 
 struct Client {
     uint64_t id{0};
-    std::shared_ptr<asyncnet::TcpStream> stream;
+    std::shared_ptr<asyncnet::AsyncTcpStream> stream;
     asyncnet::AsyncQueue<std::string> outbox;
 };
 
@@ -141,7 +142,8 @@ static asyncnet::Task<void> chatSession(asyncnet::Executor& exec,
 
         for (auto line : splitLines(buffer)) {
             if (line == "/quit") {
-                co_await asyncnet::sendAll(client->stream, "[server] bye\n");
+                // Avoid concurrent sendAll() calls; unify all outgoing messages via outbox/writer.
+                client->outbox.push("[server] bye\n");
                 buffer.clear();
                 done = true;
                 break;
@@ -159,8 +161,7 @@ static asyncnet::Task<void> chatSession(asyncnet::Executor& exec,
     co_return;
 }
 
-ROPHIVE_ASYNC_MAIN
-asyncnet::Task<void> async_main(asyncnet::Executor& accept_exec,
+rophive_async_main async_main(asyncnet::Executor& accept_exec,
                           ::RopHive::Hive& hive,
                           int worker_n,
                           std::shared_ptr<std::vector<std::shared_ptr<asyncnet::Executor>>> execs) {
@@ -169,14 +170,14 @@ asyncnet::Task<void> async_main(asyncnet::Executor& accept_exec,
 
     auto next_id = std::make_shared<std::atomic<uint64_t>>(0);
 
-    constexpr int kPort = 8080;
+    auto bind_ep = ::RopHive::Network::parseIpEndpoint("0.0.0.0:8080").value();
     co_await asyncnet::serveRoundRobin(
         accept_exec,
         hive,
         worker_n,
         std::move(execs),
-        kPort,
-        [room, next_id](asyncnet::Executor& exec, std::shared_ptr<asyncnet::TcpStream> stream) {
+        bind_ep,
+        [room, next_id](asyncnet::Executor& exec, std::shared_ptr<asyncnet::AsyncTcpStream> stream) {
             auto client = std::make_shared<Client>();
             client->id = next_id->fetch_add(1, std::memory_order_relaxed) + 1;
             client->stream = std::move(stream);

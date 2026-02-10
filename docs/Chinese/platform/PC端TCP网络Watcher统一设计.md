@@ -492,7 +492,7 @@ std::shared_ptr<ITcpConnectionWatcher>
 createTcpConnectionWatcher(IOWorker& worker,
                            TcpConnectionOption option,
                            std::unique_ptr<ITcpStream> connected_stream,
-                           ITcpConnectionWatcher::OnData on_data,
+                           ITcpConnectionWatcher::OnRecv on_recv,
                            ITcpConnectionWatcher::OnClose on_close = {},
                            ITcpConnectionWatcher::OnError on_error = {},
                            ITcpConnectionWatcher::OnSendReady on_send_ready = {});

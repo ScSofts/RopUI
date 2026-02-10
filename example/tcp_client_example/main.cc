@@ -4,14 +4,14 @@
 #include <utility>
 #include <iostream>
 
+#include <platform/network/ip_endpoint.h>
+#include <platform/network/watcher/tcp_watchers.h>
 #include <platform/schedule/hive.h>
 #include <platform/schedule/io_worker.h>
-#include <platform/linux/network/watcher/tcp_connect_watcher.h>
-#include <platform/linux/network/watcher/tcp_connection_watcher.h>
 #include <log.hpp>
 
 using namespace RopHive;
-using namespace RopHive::Linux;
+using namespace RopHive::Network;
 
 /*
  * SimpleHttpClient
@@ -36,24 +36,34 @@ public:
 
     void start() {
         auto self = shared_from_this();
-        connect_ = std::make_shared<EpollTcpConnectWatcher>(
+
+        IpEndpointV4 v4;
+        v4.ip = {127, 0, 0, 1};
+        v4.port = static_cast<uint16_t>(port_);
+
+        TcpConnectOption opt;
+        opt.fill_endpoints = true;
+
+        connect_ = createTcpConnectWatcher(
             worker_,
-            host_,
-            port_,
-            [self](int connected_fd) { self->onConnected(connected_fd); },
+            v4,
+            opt,
+            [self](std::unique_ptr<ITcpStream> stream) { self->onConnected(std::move(stream)); },
             [self](int err) { self->finishWithError(err); });
         connect_->start();
     }
 
 private:
-    void onConnected(int connected_fd) {
+    void onConnected(std::unique_ptr<ITcpStream> stream) {
         auto self = shared_from_this();
-        conn_ = std::make_shared<EpollTcpConnectionWatcher>(
+        conn_ = createTcpConnectionWatcher(
             worker_,
-            connected_fd,
-            [self](std::string_view chunk) { self->onData(chunk); },
+            TcpConnectionOption{},
+            std::move(stream),
+            [self](std::string_view chunk) { self->onRecv(chunk); },
             [self]() { self->finish(); },
-            [self](int err) { self->finishWithError(err); });
+            [self](int err) { self->finishWithError(err); },
+            [self]() { self->onSendReady(); });
         conn_->start();
         sendRequest();
     }
@@ -65,14 +75,40 @@ private:
             "Connection: close\r\n\r\n";
 
         LOG(INFO)("send request:\n%s", req.c_str());
-        if (conn_) {
-            conn_->send(req);
-            conn_->shutdownWrite();
-        }
+
+        pending_out_.assign(req.data(), req.size());
+        flushSend();
     }
 
-    void onData(std::string_view chunk) {
+    void onRecv(std::string_view chunk) {
         response_.append(chunk.data(), chunk.size());
+    }
+
+    void onSendReady() {
+        flushSend();
+    }
+
+    void flushSend() {
+        if (pending_out_.empty()) return;
+        if (!conn_) return;
+
+        while (!pending_out_.empty()) {
+            auto res = conn_->trySend(pending_out_);
+            if (res.err != 0) {
+                finishWithError(res.err);
+                return;
+            }
+            if (res.n > 0) {
+                pending_out_.erase(0, res.n);
+                continue;
+            }
+            if (res.would_block) {
+                return;
+            }
+            return;
+        }
+
+        if (conn_) conn_->shutdownWrite();
     }
 
     void finish() {
@@ -97,9 +133,10 @@ private:
     ResponseCallback cb_;
 
     bool done_{false};
-    std::shared_ptr<EpollTcpConnectWatcher> connect_;
-    std::shared_ptr<EpollTcpConnectionWatcher> conn_;
+    std::shared_ptr<ITcpConnectWatcher> connect_;
+    std::shared_ptr<ITcpConnectionWatcher> conn_;
     std::string response_;
+    std::string pending_out_;
 };
 
 /* ---------------- demo main ---------------- */

@@ -15,6 +15,7 @@
 
 // Executor is built on top of IOWorker.
 #include <platform/schedule/io_worker.h>
+#include <platform/network/ip_endpoint.h>
 
 namespace asyncnet {
 
@@ -125,34 +126,35 @@ class TaskGroup;
 TaskGroup taskGroup(Executor& exec);
 
 // Minimal TCP APIs.
-class TcpListener;
-class TcpStream;
+class AsyncTcpListener;
+class AsyncTcpStream;
 
-std::shared_ptr<TcpListener> listen(Executor& exec, int port);
-Task<std::shared_ptr<TcpStream>> accept(std::shared_ptr<TcpListener> listener);
-Task<int> acceptFd(std::shared_ptr<TcpListener> listener);
-Task<std::optional<std::string>> recvSome(std::shared_ptr<TcpStream> stream);
-Task<void> sendAll(std::shared_ptr<TcpStream> stream, std::string data);
-Task<std::shared_ptr<TcpStream>> connect(Executor& exec, std::string host, int port);
+// Listen on a specific local bind endpoint (no DNS).
+std::shared_ptr<AsyncTcpListener> listen(Executor& exec, ::RopHive::Network::IpEndpoint local_bind);
+// Convenience: listen on 0.0.0.0:<port>.
+std::shared_ptr<AsyncTcpListener> listen(Executor& exec, int port);
+
+Task<std::shared_ptr<AsyncTcpStream>> accept(std::shared_ptr<AsyncTcpListener> listener);
+Task<std::optional<std::string>> recvSome(std::shared_ptr<AsyncTcpStream> stream);
+Task<void> sendAll(std::shared_ptr<AsyncTcpStream> stream, std::string data);
+Task<std::shared_ptr<AsyncTcpStream>> connect(Executor& exec, std::string host, int port);
 Task<void> sleepFor(Executor& exec, std::chrono::milliseconds delay);
-
-// Wrap an already accepted non-blocking fd into a TcpStream bound to `exec`.
-std::shared_ptr<TcpStream> wrapStream(Executor& exec, int fd);
 
 // Multi-worker server helper:
 // - Runs accept loop on `accept_exec` (typically worker 0).
 // - Round-robins accepted fds to target workers via Hive::postToWorker.
-// - Creates TcpStream on the target worker's Executor, then spawns the handler.
+// - Creates TcpStream on the target worker's Executor (based on new tcp watchers),
+//   then spawns the handler.
 //
 // The handler is not exposed to worker ids/fds. If needed, the handler can query
 // `exec.worker.id()` for the current worker id.
-using ConnectionHandler = std::function<Task<void>(Executor& exec, std::shared_ptr<TcpStream> stream)>;
+using ConnectionHandler = std::function<Task<void>(Executor& exec, std::shared_ptr<AsyncTcpStream> stream)>;
 
 Task<void> serveRoundRobin(Executor& accept_exec,
                            ::RopHive::Hive& hive,
                            int worker_n,
                            std::shared_ptr<std::vector<std::shared_ptr<Executor>>> execs,
-                           int port,
+                           ::RopHive::Network::IpEndpoint local_bind,
                            ConnectionHandler handler);
 
 class TaskGroup {

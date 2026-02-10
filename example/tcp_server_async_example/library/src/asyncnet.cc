@@ -1,29 +1,32 @@
 #include "asyncnet.h"
 
-#include <arpa/inet.h>
-#include <fcntl.h>
-#include <netinet/in.h>
-#include <sys/socket.h>
-#include <unistd.h>
-
-#include <cerrno>
-#include <cstring>
 #include <deque>
 #include <optional>
 #include <string>
 #include <utility>
 
 #include <log.hpp>
-#include <platform/linux/schedule/epoll_backend.h>
+#include <platform/network/ip_endpoint.h>
+#include <platform/network/watcher/tcp_watchers.h>
+#include <platform/schedule/hive.h>
 #include <platform/schedule/io_worker.h>
-#include <platform/schedule/worker_watcher.h>
 
 namespace asyncnet {
 
 using ::RopHive::IOWorker;
-using ::RopHive::IEventSource;
-using ::RopHive::IWorkerWatcher;
-using ::RopHive::Linux::EpollReadinessEventSource;
+using ::RopHive::Network::IpEndpoint;
+using ::RopHive::Network::IpEndpointV4;
+using ::RopHive::Network::ITcpAcceptWatcher;
+using ::RopHive::Network::ITcpConnectWatcher;
+using ::RopHive::Network::ITcpConnectionWatcher;
+using ::RopHive::Network::ITcpStream;
+using ::RopHive::Network::TcpAcceptOption;
+using ::RopHive::Network::TcpConnectOption;
+using ::RopHive::Network::TcpConnectionOption;
+using ::RopHive::Network::createTcpAcceptWatcher;
+using ::RopHive::Network::createTcpConnectWatcher;
+using ::RopHive::Network::createTcpConnectionWatcher;
+using ::RopHive::Network::parseIpEndpoint;
 
 void Executor::schedule(std::coroutine_handle<> h) {
     worker.postPrivate([this, h]() mutable {
@@ -49,19 +52,11 @@ void Executor::schedule(std::coroutine_handle<> h) {
     worker.wakeup();
 }
 
-class WorkerSourceGuard : public IWorkerWatcher {
-public:
-    explicit WorkerSourceGuard(IOWorker& worker) : IWorkerWatcher(worker) {}
-    void start() override {}
-    void stop() override {}
-
-    void attach(const std::shared_ptr<IEventSource>& src) { attachSource(src); }
-    void detach(const std::shared_ptr<IEventSource>& src) { detachSource(src); }
-};
-
 void spawn(Executor& exec, Task<void> task) {
     task.detach(exec);
 }
+
+// ---- TaskGroup ----
 
 struct TaskGroup::State {
     explicit State(Executor& executor) : exec(&executor) {}
@@ -111,297 +106,320 @@ Task<void> TaskGroup::join() {
     co_return;
 }
 
-class AsyncFd : public std::enable_shared_from_this<AsyncFd> {
+// ---- TCP adapters built on new unified tcp watchers ----
+
+class AsyncTcpStream : public std::enable_shared_from_this<AsyncTcpStream> {
 public:
-    static std::shared_ptr<AsyncFd> create(Executor& exec, int fd, uint32_t events) {
-        auto self = std::shared_ptr<AsyncFd>(new AsyncFd(exec, fd));
-        self->init(events);
+    static std::shared_ptr<AsyncTcpStream> create(Executor& exec, std::unique_ptr<ITcpStream> connected) {
+        auto self = std::shared_ptr<AsyncTcpStream>(new AsyncTcpStream(exec));
+        self->init(std::move(connected));
         return self;
     }
 
-    ~AsyncFd() {
-        guard_.detach(source_);
-    }
+    ~AsyncTcpStream() {
+        auto watcher = watcher_;
+        if (!watcher) return;
 
-    int fd() const noexcept { return fd_; }
-    void setEvents(uint32_t events) { source_->setEvents(events); }
+        auto& worker = exec_.worker;
+        auto cleanup = [watcher, &worker]() mutable {
+            watcher->close();
+            watcher->stop();
+            worker.releaseWatcher(watcher.get());
+        };
 
-    struct Readable {
-        std::shared_ptr<AsyncFd> self;
-        bool await_ready() const noexcept { return false; }
-        void await_suspend(std::coroutine_handle<> h) { self->read_waiters_.push_back(h); }
-        uint32_t await_resume() const noexcept { return self->last_events_; }
-    };
-
-    struct Writable {
-        std::shared_ptr<AsyncFd> self;
-        bool await_ready() const noexcept { return false; }
-        void await_suspend(std::coroutine_handle<> h) { self->write_waiters_.push_back(h); }
-        uint32_t await_resume() const noexcept { return self->last_events_; }
-    };
-
-    Readable readable() { return Readable{shared_from_this()}; }
-    Writable writable() { return Writable{shared_from_this()}; }
-
-private:
-    AsyncFd(Executor& exec, int fd)
-        : exec_(exec), guard_(exec.worker), fd_(fd) {}
-
-    void init(uint32_t events) {
-        // The epoll callback can outlive this object if there are already pending events.
-        // Guard against use-after-free by capturing a weak_ptr instead of `this`.
-        auto weak = weak_from_this();
-        source_ = std::make_shared<EpollReadinessEventSource>(
-            fd_,
-            events,
-            [weak](uint32_t ev) {
-                if (auto self = weak.lock()) {
-                    self->onReady(ev);
-                }
-            });
-        guard_.attach(source_);
-    }
-
-    void onReady(uint32_t events) {
-        last_events_ = events;
-        while (!read_waiters_.empty()) {
-            auto h = read_waiters_.front();
-            read_waiters_.pop_front();
-            exec_.schedule(h);
-        }
-        while (!write_waiters_.empty()) {
-            auto h = write_waiters_.front();
-            write_waiters_.pop_front();
-            exec_.schedule(h);
-        }
-    }
-
-private:
-    Executor& exec_;
-    WorkerSourceGuard guard_;
-    int fd_{-1};
-    std::shared_ptr<EpollReadinessEventSource> source_;
-    uint32_t last_events_{0};
-    std::deque<std::coroutine_handle<>> read_waiters_;
-    std::deque<std::coroutine_handle<>> write_waiters_;
-};
-
-class TcpStream : public std::enable_shared_from_this<TcpStream> {
-public:
-    TcpStream(Executor& exec, int fd)
-        : exec_(exec), fd_(fd) {
-        afd_ = AsyncFd::create(exec_, fd_, EPOLLIN | EPOLLERR | EPOLLHUP | EPOLLRDHUP);
-    }
-
-    ~TcpStream() {
-        // Detach from epoll before closing the fd to avoid events firing on a closed/reused fd.
-        afd_.reset();
-        if (fd_ >= 0) {
-            ::close(fd_);
-            fd_ = -1;
+        if (IOWorker::currentWorker() == &worker) {
+            cleanup();
+        } else {
+            worker.postPrivate(std::move(cleanup));
+            worker.wakeup();
         }
     }
 
     Task<std::optional<std::string>> recvSome() {
-        for (;;) {
-            char buf[4096];
-            const ssize_t n = ::recv(fd_, buf, sizeof(buf), 0);
-            if (n > 0) {
-                co_return std::string(buf, buf + n);
-            }
-            if (n == 0) {
-                co_return std::nullopt;
-            }
-            if (errno == EINTR) continue;
-            if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                co_await afd_->readable();
-                continue;
-            }
-            co_return std::nullopt;
-        }
+        auto chunk = co_await recv_q_.pop();
+        if (!chunk.has_value()) co_return std::nullopt;
+        co_return std::move(*chunk);
     }
 
     Task<void> sendAll(std::string data) {
-        out_.append(data);
-        afd_->setEvents(EPOLLIN | EPOLLERR | EPOLLHUP | EPOLLRDHUP | EPOLLOUT);
+        struct LockAwaiter {
+            AsyncTcpStream& self;
+            bool await_ready() const noexcept { return !self.send_locked_; }
+            void await_suspend(std::coroutine_handle<> h) { self.send_lock_waiters_.push_back(h); }
+            void await_resume() noexcept { self.send_locked_ = true; }
+        };
+
+        struct Unlocker {
+            AsyncTcpStream* self{nullptr};
+            ~Unlocker() {
+                if (self) self->unlockSend_();
+            }
+        };
+
+        co_await LockAwaiter{*this};
+        Unlocker unlock{this};
+
+        out_.append(std::move(data));
+        if (!watcher_) co_return;
+
         while (!out_.empty()) {
-            const ssize_t n = ::send(fd_, out_.data(), out_.size(), MSG_NOSIGNAL);
-            if (n > 0) {
-                out_.erase(0, static_cast<size_t>(n));
+            auto res = watcher_->trySend(out_);
+            if (res.err != 0) {
+                recv_q_.close();
+                send_ready_q_.close();
+                watcher_->close();
+                co_return;
+            }
+
+            if (res.n > 0) {
+                out_.erase(0, res.n);
                 continue;
             }
-            if (n < 0 && errno == EINTR) continue;
-            if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
-                co_await afd_->writable();
+
+            if (res.would_block) {
+                auto ready = co_await send_ready_q_.pop();
+                if (!ready.has_value()) co_return;
                 continue;
             }
+
             co_return;
         }
-        afd_->setEvents(EPOLLIN | EPOLLERR | EPOLLHUP | EPOLLRDHUP);
         co_return;
     }
 
 private:
-    Executor& exec_;
-    int fd_{-1};
-    std::shared_ptr<AsyncFd> afd_;
-    std::string out_;
-};
-
-std::shared_ptr<TcpStream> wrapStream(Executor& exec, int fd) {
-    return std::make_shared<TcpStream>(exec, fd);
-}
-
-static int setNonBlockingFd(int fd) {
-    const int flags = ::fcntl(fd, F_GETFL, 0);
-    if (flags < 0) return -1;
-    return ::fcntl(fd, F_SETFL, flags | O_NONBLOCK);
-}
-
-static int makeListenSocketInternal(int port) {
-    const int fd = ::socket(AF_INET, SOCK_STREAM, 0);
-    if (fd < 0) {
-        LOG(FATAL)("socket failed: %s", std::strerror(errno));
-        std::abort();
+    explicit AsyncTcpStream(Executor& exec)
+        : exec_(exec) {
+        recv_q_.bind(exec_);
+        send_ready_q_.bind(exec_);
     }
 
-    int yes = 1;
-    ::setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
-    if (setNonBlockingFd(fd) != 0) {
-        LOG(FATAL)("fcntl O_NONBLOCK failed: %s", std::strerror(errno));
-        std::abort();
+    void init(std::unique_ptr<ITcpStream> connected) {
+        auto weak = weak_from_this();
+        auto watcher_wp_box = std::make_shared<std::weak_ptr<ITcpConnectionWatcher>>();
+
+        TcpConnectionOption opt;
+        watcher_ = createTcpConnectionWatcher(
+            exec_.worker,
+            opt,
+            std::move(connected),
+            [weak](std::string_view chunk) {
+                if (auto self = weak.lock()) {
+                    self->recv_q_.push(std::string(chunk));
+                }
+            },
+            [weak, watcher_wp_box]() {
+                if (auto self = weak.lock()) {
+                    self->recv_q_.close();
+                    self->send_ready_q_.close();
+                }
+                if (auto* w = IOWorker::currentWorker()) {
+                    if (auto watcher = watcher_wp_box->lock()) {
+                        watcher->stop();
+                        w->releaseWatcher(watcher.get());
+                    }
+                }
+            },
+            [weak, watcher_wp_box](int err) {
+                LOG(WARN)("connection error=%d", err);
+                if (auto self = weak.lock()) {
+                    self->recv_q_.close();
+                    self->send_ready_q_.close();
+                }
+                if (auto* w = IOWorker::currentWorker()) {
+                    if (auto watcher = watcher_wp_box->lock()) {
+                        watcher->stop();
+                        w->releaseWatcher(watcher.get());
+                    }
+                }
+            },
+            [weak]() {
+                if (auto self = weak.lock()) {
+                    self->send_ready_q_.push(1);
+                }
+            });
+
+        *watcher_wp_box = watcher_;
+        exec_.worker.adoptWatcher(watcher_);
+        watcher_->start();
     }
 
-    sockaddr_in addr{};
-    addr.sin_family = AF_INET;
-    addr.sin_addr.s_addr = htonl(INADDR_ANY);
-    addr.sin_port = htons(static_cast<uint16_t>(port));
-
-    if (::bind(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) < 0) {
-        LOG(FATAL)("bind failed: %s", std::strerror(errno));
-        ::close(fd);
-        std::abort();
-    }
-    if (::listen(fd, SOMAXCONN) < 0) {
-        LOG(FATAL)("listen failed: %s", std::strerror(errno));
-        ::close(fd);
-        std::abort();
-    }
-    return fd;
-}
-
-class TcpListener : public std::enable_shared_from_this<TcpListener> {
-public:
-    TcpListener(Executor& exec, int port)
-        : exec_(exec), listen_fd_(makeListenSocketInternal(port)) {
-        afd_ = AsyncFd::create(exec_, listen_fd_, EPOLLIN | EPOLLERR | EPOLLHUP);
-    }
-
-    ~TcpListener() {
-        // Detach from epoll before closing the fd to avoid events firing on a closed/reused fd.
-        afd_.reset();
-        if (listen_fd_ >= 0) {
-            ::close(listen_fd_);
-            listen_fd_ = -1;
+    void unlockSend_() {
+        if (!send_lock_waiters_.empty()) {
+            auto h = send_lock_waiters_.front();
+            send_lock_waiters_.pop_front();
+            exec_.schedule(h);
+            return;
         }
-    }
-
-    Task<std::shared_ptr<TcpStream>> accept() {
-        for (;;) {
-            int client_fd = ::accept4(listen_fd_, nullptr, nullptr, SOCK_NONBLOCK | SOCK_CLOEXEC);
-            if (client_fd >= 0) {
-                co_return std::make_shared<TcpStream>(exec_, client_fd);
-            }
-            if (errno == EINTR) continue;
-            if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                co_await afd_->readable();
-                continue;
-            }
-            co_return std::shared_ptr<TcpStream>{};
-        }
-    }
-
-    Task<int> acceptFd() {
-        for (;;) {
-            int client_fd = ::accept4(listen_fd_, nullptr, nullptr, SOCK_NONBLOCK | SOCK_CLOEXEC);
-            if (client_fd >= 0) {
-                co_return client_fd;
-            }
-            if (errno == EINTR) continue;
-            if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                co_await afd_->readable();
-                continue;
-            }
-            co_return -1;
-        }
+        send_locked_ = false;
     }
 
 private:
     Executor& exec_;
-    int listen_fd_{-1};
-    std::shared_ptr<AsyncFd> afd_;
+    std::shared_ptr<ITcpConnectionWatcher> watcher_;
+    AsyncQueue<std::string> recv_q_;
+    AsyncQueue<int> send_ready_q_;
+
+    std::string out_;
+
+    bool send_locked_{false};
+    std::deque<std::coroutine_handle<>> send_lock_waiters_;
 };
 
-std::shared_ptr<TcpListener> listen(Executor& exec, int port) {
-    return std::make_shared<TcpListener>(exec, port);
+class AsyncTcpListener : public std::enable_shared_from_this<AsyncTcpListener> {
+public:
+    static std::shared_ptr<AsyncTcpListener> create(Executor& exec, IpEndpoint local_bind) {
+        auto self = std::shared_ptr<AsyncTcpListener>(new AsyncTcpListener(exec, std::move(local_bind)));
+        self->init();
+        return self;
+    }
+
+    ~AsyncTcpListener() {
+        auto watcher = watcher_;
+        if (!watcher) return;
+
+        auto& worker = exec_.worker;
+        auto cleanup = [watcher, &worker]() mutable {
+            watcher->stop();
+            worker.releaseWatcher(watcher.get());
+        };
+
+        if (IOWorker::currentWorker() == &worker) {
+            cleanup();
+        } else {
+            worker.postPrivate(std::move(cleanup));
+            worker.wakeup();
+        }
+    }
+
+    Task<std::shared_ptr<AsyncTcpStream>> accept() {
+        auto connected = co_await acceptStream_();
+        if (!connected) co_return std::shared_ptr<AsyncTcpStream>{};
+        co_return AsyncTcpStream::create(exec_, std::move(connected));
+    }
+
+    Task<std::unique_ptr<ITcpStream>> acceptStream_() {
+        auto v = co_await accepted_.pop();
+        if (!v.has_value()) co_return std::unique_ptr<ITcpStream>{};
+        co_return std::move(*v);
+    }
+
+private:
+    AsyncTcpListener(Executor& exec, IpEndpoint local_bind)
+        : exec_(exec), local_bind_(std::move(local_bind)) {
+        accepted_.bind(exec_);
+    }
+
+    void init() {
+        TcpAcceptOption opt;
+        opt.local = local_bind_;
+        opt.fill_endpoints = true;
+        opt.reuse_addr = true;
+        opt.set_close_on_exec = true;
+        opt.tcp_no_delay = true;
+
+        auto weak = weak_from_this();
+        auto watcher_wp_box = std::make_shared<std::weak_ptr<ITcpAcceptWatcher>>();
+
+        watcher_ = createTcpAcceptWatcher(
+            exec_.worker,
+            opt,
+            [weak](std::unique_ptr<ITcpStream> stream) {
+                if (auto self = weak.lock()) {
+                    self->accepted_.push(std::move(stream));
+                }
+            },
+            [weak, watcher_wp_box](int err) {
+                LOG(WARN)("accept watcher error=%d", err);
+                if (auto self = weak.lock()) {
+                    self->accepted_.close();
+                }
+                if (auto* w = IOWorker::currentWorker()) {
+                    if (auto watcher = watcher_wp_box->lock()) {
+                        watcher->stop();
+                        w->releaseWatcher(watcher.get());
+                    }
+                }
+            });
+
+        *watcher_wp_box = watcher_;
+        exec_.worker.adoptWatcher(watcher_);
+        watcher_->start();
+    }
+
+private:
+    Executor& exec_;
+    IpEndpoint local_bind_;
+    AsyncQueue<std::unique_ptr<ITcpStream>> accepted_;
+    std::shared_ptr<ITcpAcceptWatcher> watcher_;
+};
+
+std::shared_ptr<AsyncTcpListener> listen(Executor& exec, IpEndpoint local_bind) {
+    return AsyncTcpListener::create(exec, std::move(local_bind));
 }
 
-Task<std::shared_ptr<TcpStream>> accept(std::shared_ptr<TcpListener> listener) {
+std::shared_ptr<AsyncTcpListener> listen(Executor& exec, int port) {
+    IpEndpointV4 bind_v4;
+    bind_v4.ip = {0, 0, 0, 0};
+    bind_v4.port = static_cast<uint16_t>(port);
+    return AsyncTcpListener::create(exec, bind_v4);
+}
+
+Task<std::shared_ptr<AsyncTcpStream>> accept(std::shared_ptr<AsyncTcpListener> listener) {
+    if (!listener) co_return std::shared_ptr<AsyncTcpStream>{};
     co_return co_await listener->accept();
 }
 
-Task<int> acceptFd(std::shared_ptr<TcpListener> listener) {
-    co_return co_await listener->acceptFd();
-}
-
-Task<std::optional<std::string>> recvSome(std::shared_ptr<TcpStream> stream) {
+Task<std::optional<std::string>> recvSome(std::shared_ptr<AsyncTcpStream> stream) {
+    if (!stream) co_return std::nullopt;
     co_return co_await stream->recvSome();
 }
 
-Task<void> sendAll(std::shared_ptr<TcpStream> stream, std::string data) {
+Task<void> sendAll(std::shared_ptr<AsyncTcpStream> stream, std::string data) {
+    if (!stream) co_return;
     co_await stream->sendAll(std::move(data));
 }
 
-Task<std::shared_ptr<TcpStream>> connect(Executor& exec, std::string host, int port) {
-    const int fd = ::socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
-    if (fd < 0) {
-        co_return std::shared_ptr<TcpStream>{};
-    }
+Task<std::shared_ptr<AsyncTcpStream>> connect(Executor& exec, std::string host, int port) {
+    const std::string addr = host + ":" + std::to_string(port);
+    auto remote_opt = parseIpEndpoint(addr);
+    if (!remote_opt.has_value()) co_return std::shared_ptr<AsyncTcpStream>{};
 
-    sockaddr_in addr{};
-    addr.sin_family = AF_INET;
-    addr.sin_port = htons(static_cast<uint16_t>(port));
-    if (::inet_pton(AF_INET, host.c_str(), &addr.sin_addr) != 1) {
-        ::close(fd);
-        co_return std::shared_ptr<TcpStream>{};
-    }
+    AsyncQueue<std::unique_ptr<ITcpStream>> connected;
+    connected.bind(exec);
 
-    int rc;
-    do {
-        rc = ::connect(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr));
-    } while (rc != 0 && errno == EINTR);
+    auto watcher_wp_box = std::make_shared<std::weak_ptr<ITcpConnectWatcher>>();
+    TcpConnectOption opt;
+    opt.fill_endpoints = true;
+    opt.set_close_on_exec = true;
+    opt.tcp_no_delay = true;
 
-    if (rc == 0) {
-        co_return std::make_shared<TcpStream>(exec, fd);
-    }
-    if (errno != EINPROGRESS) {
-        ::close(fd);
-        co_return std::shared_ptr<TcpStream>{};
-    }
+    auto watcher = createTcpConnectWatcher(
+        exec.worker,
+        *remote_opt,
+        opt,
+        [&connected](std::unique_ptr<ITcpStream> stream) {
+            connected.push(std::move(stream));
+            connected.close();
+        },
+        [&connected, watcher_wp_box](int err) {
+            LOG(WARN)("connect watcher error=%d", err);
+            connected.close();
+            if (auto* w = IOWorker::currentWorker()) {
+                if (auto cw = watcher_wp_box->lock()) {
+                    cw->stop();
+                    w->releaseWatcher(cw.get());
+                }
+            }
+        });
 
-    auto afd = AsyncFd::create(exec, fd, EPOLLOUT | EPOLLERR | EPOLLHUP);
-    co_await afd->writable();
+    *watcher_wp_box = watcher;
+    exec.worker.adoptWatcher(watcher);
+    watcher->start();
 
-    int so_err = 0;
-    socklen_t len = sizeof(so_err);
-    if (::getsockopt(fd, SOL_SOCKET, SO_ERROR, &so_err, &len) != 0) {
-        so_err = errno;
-    }
-    if (so_err != 0) {
-        ::close(fd);
-        co_return std::shared_ptr<TcpStream>{};
-    }
-    co_return std::make_shared<TcpStream>(exec, fd);
+    auto v = co_await connected.pop();
+    if (!v.has_value() || !*v) co_return std::shared_ptr<AsyncTcpStream>{};
+    co_return AsyncTcpStream::create(exec, std::move(*v));
 }
 
 Task<void> sleepFor(Executor& exec, std::chrono::milliseconds delay) {
@@ -427,23 +445,28 @@ Task<void> serveRoundRobin(Executor& accept_exec,
                            ::RopHive::Hive& hive,
                            int worker_n,
                            std::shared_ptr<std::vector<std::shared_ptr<Executor>>> execs,
-                           int port,
+                           IpEndpoint local_bind,
                            ConnectionHandler handler) {
-    auto listener = asyncnet::listen(accept_exec, port);
+    auto listener = asyncnet::listen(accept_exec, std::move(local_bind));
 
     size_t rr = 0;
     for (;;) {
-        const int client_fd = co_await asyncnet::acceptFd(listener);
-        if (client_fd < 0) co_return;
+        auto connected = co_await listener->acceptStream_();
+        if (!connected) co_return;
 
         const size_t target = (rr++) % static_cast<size_t>(std::max(1, worker_n));
-        hive.postToWorker(target, [execs, target, client_fd, handler]() mutable {
+        auto connected_box =
+            std::make_shared<std::unique_ptr<ITcpStream>>(std::move(connected));
+
+        hive.postToWorker(target, [execs, target, connected_box, handler]() mutable {
             auto* self = ::RopHive::IOWorker::currentWorker();
             if (!self) return;
             auto exec = (*execs)[target];
             if (!exec) return;
 
-            auto stream = asyncnet::wrapStream(*exec, client_fd);
+            auto connected_local = std::move(*connected_box);
+            if (!connected_local) return;
+            auto stream = AsyncTcpStream::create(*exec, std::move(connected_local));
             asyncnet::spawn(*exec, handler(*exec, std::move(stream)));
         });
     }
