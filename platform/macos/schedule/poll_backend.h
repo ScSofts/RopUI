@@ -26,6 +26,8 @@ public:
 
     bool matches(const void* raw_event) const override;
 
+    void setEvents(short events);
+
 protected:
     int fd() const { return fd_; }
     short events() const { return events_; }
@@ -36,6 +38,7 @@ private:
     int fd_;
     short events_;
     bool armed_ = false;
+    IEventCoreBackend* backend_{nullptr};
 };
 
 class PollBackend final : public IEventCoreBackend {
@@ -79,6 +82,7 @@ public:
                       Callback cb);
 
     void dispatch(const void* raw_event) override;
+    void setEvents(short events) { PollEventSource::setEvents(events); }
 
 private:
     Callback callback_;
