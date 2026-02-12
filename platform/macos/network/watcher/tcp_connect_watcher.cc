@@ -16,15 +16,6 @@ namespace {
 
 using namespace RopHive::Network;
 
-static int getSoErrorOr(int fd, int fallback) {
-  int err = 0;
-  socklen_t len = sizeof(err);
-  if (::getsockopt(fd, SOL_SOCKET, SO_ERROR, &err, &len) != 0) {
-    return errno != 0 ? errno : fallback;
-  }
-  return err != 0 ? err : fallback;
-}
-
 class KqueueTcpConnectWatcher final : public ITcpConnectWatcher {
 public:
   KqueueTcpConnectWatcher(IOWorker &worker, IpEndpoint remote,

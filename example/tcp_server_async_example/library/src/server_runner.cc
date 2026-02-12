@@ -12,6 +12,16 @@
 #include <platform/schedule/hive.h>
 #include <platform/schedule/io_worker.h>
 
+#ifdef __linux__
+#define DEFAULT_BACKEND BackendType::LINUX_EPOLL
+#endif
+#ifdef __APPLE__ 
+#define DEFAULT_BACKEND BackendType::MACOS_KQUEUE
+#endif
+#ifdef _WIN32
+#define DEFAULT_BACKEND BackendType::WINDOWS_IOCP
+#endif
+
 namespace tcp_server_async_example {
 
 static int parseInt(const char* s, int fallback) {
@@ -65,7 +75,7 @@ int run(int argc, char** argv) {
     installTerminateHandler();
 
     ::RopHive::Hive::Options opt;
-    opt.io_backend = ::RopHive::BackendType::LINUX_EPOLL;
+    opt.io_backend = ::RopHive::DEFAULT_BACKEND;
 
     const int worker_n = std::max(1, parseInt(argc > 1 ? argv[1] : nullptr, 4));
 

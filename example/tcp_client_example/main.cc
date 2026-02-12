@@ -13,6 +13,16 @@
 using namespace RopHive;
 using namespace RopHive::Network;
 
+#ifdef __linux__
+#define DEFAULT_BACKEND BackendType::LINUX_EPOLL
+#endif
+#ifdef __APPLE__ 
+#define DEFAULT_BACKEND BackendType::MACOS_KQUEUE
+#endif
+#ifdef _WIN32
+#define DEFAULT_BACKEND BackendType::WINDOWS_IOCP
+#endif
+
 /*
  * SimpleHttpClient
  *
@@ -149,7 +159,7 @@ int main() {
   logger::setMinLevel(LogLevel::DEBUG);
 
   Hive::Options opt;
-  opt.io_backend = BackendType::LINUX_EPOLL;
+  opt.io_backend = DEFAULT_BACKEND;
 
   Hive hive(opt);
   auto worker = std::make_shared<IOWorker>(opt);
