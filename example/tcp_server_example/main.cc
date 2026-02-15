@@ -21,7 +21,9 @@ using namespace RopHive::Network;
 #define DEFAULT_BACKEND BackendType::MACOS_KQUEUE
 #endif
 #ifdef _WIN32
+#include <ws2tcpip.h>
 #define DEFAULT_BACKEND BackendType::WINDOWS_IOCP
+extern WSADATA wsaData;
 #endif
 
 class EchoSession : public std::enable_shared_from_this<EchoSession> {
@@ -89,10 +91,14 @@ private:
 };
 
 int main() {
-#if defined(_WIN32) or defined(_WIN64)
-    RopHive::Windows::global_init();
+#if defined(_WIN32)
+    int ret = WSAStartup(MAKEWORD(2,2), &wsaData);
+    if (ret != 0) {
+        LOG(ERROR)("WSAStartup failed: %d\n", ret);
+        return;
+    }
 #endif
-    logger::setMinLevel(LogLevel::INFO);
+    logger::setMinLevel(LogLevel::DEBUG);
     Hive::Options opt;
     opt.io_backend = DEFAULT_BACKEND;
 
@@ -105,7 +111,7 @@ int main() {
         if (!self) return;
 
         TcpAcceptOption acc_opt;
-        acc_opt.local = parseIpEndpoint("0.0.0.0:8000").value();
+        acc_opt.local = parseIpEndpoint("0.0.0.0:8080").value();
         acc_opt.fill_endpoints = true;
         acc_opt.set_close_on_exec = true;
         acc_opt.reuse_addr = true;

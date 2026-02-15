@@ -39,6 +39,10 @@ target_link_libraries(ropui
         ropui_concurrency
 )
 
+if(WIN32)
+    target_link_libraries(ropui PRIVATE ws2_32 mswsock)
+endif()
+
 if(APPLE)
 find_library(APPKIT_LIBRARY AppKit REQUIRED)
 find_library(COREFOUNDATION_LIBRARY CoreFoundation REQUIRED)
