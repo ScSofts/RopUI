@@ -81,7 +81,12 @@ private:
 int main() {
     logger::setMinLevel(LogLevel::INFO);
     Hive::Options opt;
+#ifdef __linux__
     opt.io_backend = BackendType::LINUX_EPOLL;
+#elif defined(_WIN32) or defined(_WIN64)
+    RopHive::Windows::global_init();
+    opt.io_backend = BackendType::WINDOWS_IOCP;
+#endif
 
     Hive hive(opt);
     auto worker = std::make_shared<IOWorker>(opt);

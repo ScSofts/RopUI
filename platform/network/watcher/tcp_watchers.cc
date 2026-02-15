@@ -7,6 +7,10 @@
 #include "../../linux/network/watcher/tcp_accept_watcher.h"
 #include "../../linux/network/watcher/tcp_connect_watcher.h"
 #include "../../linux/network/watcher/tcp_connection_watcher.h"
+#elif defined(_WIN32) or defined(_WIN64)
+#include "../../windows/network/watcher/tcp_accept_watcher.h"
+#include "../../windows/network/watcher/tcp_connect_watcher.h"
+#include "../../windows/network/watcher/tcp_connection_watcher.h"
 #endif
 
 namespace RopHive::Network {
@@ -26,7 +30,16 @@ createTcpAcceptWatcher(IOWorker &worker, TcpAcceptOption option,
   default:
     break;
   }
+#elif defined(_WIN32) or defined(_WIN64)
+  switch (worker.backendType()) {
+  case BackendType::WINDOWS_IOCP:
+    return RopHive::Windows::createIocpTcpAcceptWatcher(
+        worker, std::move(option), std::move(on_accept), std::move(on_error));
+  default:
+    break;
+  }
 #endif
+
   throw std::runtime_error(
       "createTcpAcceptWatcher: unsupported platform/backend");
 }
@@ -44,6 +57,15 @@ createTcpConnectWatcher(IOWorker &worker, IpEndpoint remote,
         std::move(on_error));
   case BackendType::LINUX_POLL:
     return RopHive::Linux::createPollTcpConnectWatcher(
+        worker, std::move(remote), std::move(option), std::move(on_connected),
+        std::move(on_error));
+  default:
+    break;
+  }
+#elif defined(_WIN32) or defined(_WIN64)
+  switch (worker.backendType()) {
+  case BackendType::WINDOWS_IOCP:
+    return RopHive::Windows::createIocpTcpConnectWatcher(
         worker, std::move(remote), std::move(option), std::move(on_connected),
         std::move(on_error));
   default:
@@ -80,6 +102,16 @@ createTcpConnectionWatcher(IOWorker &worker, TcpConnectionOption option,
         std::move(on_send_ready));
   default:
     break;
+  }
+#elif defined(_WIN32) or defined(_WIN64)
+  switch (worker.backendType()) {
+    case BackendType::WINDOWS_IOCP:
+      return RopHive::Windows::createIocpTcpConnectionWatcher(
+          worker, std::move(option), std::move(connected_stream),
+          std::move(on_recv), std::move(on_close), std::move(on_error),
+          std::move(on_send_ready));
+    default:
+      break;
   }
 #endif
   throw std::runtime_error(
