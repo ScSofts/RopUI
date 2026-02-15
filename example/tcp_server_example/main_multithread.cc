@@ -18,6 +18,16 @@
 using namespace RopHive;
 using namespace RopHive::Network;
 
+#ifdef __linux__
+#define DEFAULT_BACKEND BackendType::LINUX_EPOLL
+#endif
+#ifdef __APPLE__ 
+#define DEFAULT_BACKEND BackendType::MACOS_KQUEUE
+#endif
+#ifdef _WIN32
+#define DEFAULT_BACKEND BackendType::WINDOWS_IOCP
+#endif
+
 class EchoSession : public std::enable_shared_from_this<EchoSession> {
 public:
     explicit EchoSession(IOWorker& worker)
@@ -93,7 +103,7 @@ int main(int argc, char** argv) {
     LOG(INFO)("tcp_server_multithread_example listening on 0.0.0.0:%d (workers=%d)", kPort, worker_n);
 
     Hive::Options opt;
-    opt.io_backend = BackendType::LINUX_EPOLL;
+    opt.io_backend = DEFAULT_BACKEND;
 
     Hive hive(opt);
     for (int i = 0; i < worker_n; ++i) {

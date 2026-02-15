@@ -13,6 +13,12 @@
 #include "../../windows/network/watcher/tcp_connection_watcher.h"
 #endif
 
+#ifdef __APPLE__
+#include "../../macos/network/watcher/tcp_accept_watcher.h"
+#include "../../macos/network/watcher/tcp_connect_watcher.h"
+#include "../../macos/network/watcher/tcp_connection_watcher.h"
+#endif
+
 namespace RopHive::Network {
 
 std::shared_ptr<ITcpAcceptWatcher>
@@ -34,6 +40,18 @@ createTcpAcceptWatcher(IOWorker &worker, TcpAcceptOption option,
   switch (worker.backendType()) {
   case BackendType::WINDOWS_IOCP:
     return RopHive::Windows::createIocpTcpAcceptWatcher(
+        worker, std::move(option), std::move(on_accept), std::move(on_error));
+  default:
+    break;
+  }
+#endif
+#ifdef __APPLE__
+  switch (worker.backendType()) {
+  case BackendType::MACOS_KQUEUE:
+    return RopHive::MacOS::createKqueueTcpAcceptWatcher(
+        worker, std::move(option), std::move(on_accept), std::move(on_error));
+  case BackendType::MACOS_POLL:
+    return RopHive::MacOS::createPollTcpAcceptWatcher(
         worker, std::move(option), std::move(on_accept), std::move(on_error));
   default:
     break;
@@ -72,6 +90,20 @@ createTcpConnectWatcher(IOWorker &worker, IpEndpoint remote,
     break;
   }
 #endif
+#ifdef __APPLE__
+  switch (worker.backendType()) {
+  case BackendType::MACOS_KQUEUE:
+    return RopHive::MacOS::createKqueueTcpConnectWatcher(
+        worker, std::move(remote), std::move(option), std::move(on_connected),
+        std::move(on_error));
+  case BackendType::MACOS_POLL:
+    return RopHive::MacOS::createPollTcpConnectWatcher(
+        worker, std::move(remote), std::move(option), std::move(on_connected),
+        std::move(on_error));
+  default:
+    break;
+  }
+#endif
   throw std::runtime_error(
       "createTcpConnectWatcher: unsupported platform/backend");
 }
@@ -97,6 +129,22 @@ createTcpConnectionWatcher(IOWorker &worker, TcpConnectionOption option,
         std::move(on_send_ready));
   case BackendType::LINUX_POLL:
     return RopHive::Linux::createPollTcpConnectionWatcher(
+        worker, std::move(option), std::move(connected_stream),
+        std::move(on_recv), std::move(on_close), std::move(on_error),
+        std::move(on_send_ready));
+  default:
+    break;
+  }
+#endif
+#ifdef __APPLE__
+  switch (worker.backendType()) {
+  case BackendType::MACOS_KQUEUE:
+    return RopHive::MacOS::createKqueueTcpConnectionWatcher(
+        worker, std::move(option), std::move(connected_stream),
+        std::move(on_recv), std::move(on_close), std::move(on_error),
+        std::move(on_send_ready));
+  case BackendType::MACOS_POLL:
+    return RopHive::MacOS::createPollTcpConnectionWatcher(
         worker, std::move(option), std::move(connected_stream),
         std::move(on_recv), std::move(on_close), std::move(on_error),
         std::move(on_send_ready));
