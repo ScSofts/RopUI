@@ -7,7 +7,9 @@
 #include "../../linux/network/watcher/tcp_accept_watcher.h"
 #include "../../linux/network/watcher/tcp_connect_watcher.h"
 #include "../../linux/network/watcher/tcp_connection_watcher.h"
-#elif defined(_WIN32) or defined(_WIN64)
+#endif
+
+#ifdef _WIN32
 #include "../../windows/network/watcher/tcp_accept_watcher.h"
 #include "../../windows/network/watcher/tcp_connect_watcher.h"
 #include "../../windows/network/watcher/tcp_connection_watcher.h"
@@ -36,7 +38,8 @@ createTcpAcceptWatcher(IOWorker &worker, TcpAcceptOption option,
   default:
     break;
   }
-#elif defined(_WIN32) or defined(_WIN64)
+#endif
+#ifdef _WIN32
   switch (worker.backendType()) {
   case BackendType::WINDOWS_IOCP:
     return RopHive::Windows::createIocpTcpAcceptWatcher(
@@ -80,7 +83,8 @@ createTcpConnectWatcher(IOWorker &worker, IpEndpoint remote,
   default:
     break;
   }
-#elif defined(_WIN32) or defined(_WIN64)
+#endif
+#ifdef _WIN32
   switch (worker.backendType()) {
   case BackendType::WINDOWS_IOCP:
     return RopHive::Windows::createIocpTcpConnectWatcher(
@@ -151,7 +155,8 @@ createTcpConnectionWatcher(IOWorker &worker, TcpConnectionOption option,
   default:
     break;
   }
-#elif defined(_WIN32) or defined(_WIN64)
+#endif
+#ifdef _WIN32
   switch (worker.backendType()) {
     case BackendType::WINDOWS_IOCP:
       return RopHive::Windows::createIocpTcpConnectionWatcher(
