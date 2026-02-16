@@ -2,9 +2,8 @@
 #ifndef _ROP_PLATFORM_WINDOWS_NETWORK_WATCHER_TCP_CONNECT_WATCHER_H
 #define _ROP_PLATFORM_WINDOWS_NETWORK_WATCHER_TCP_CONNECT_WATCHER_H
 
-#if defined(_WIN32) or defined(_WIN64)
+#ifdef _WIN32
 #include <memory>
-
 #include "../../../network/watcher/tcp_watchers.h"
 #include "../../../schedule/io_worker.h"
 
@@ -19,6 +18,6 @@ createIocpTcpConnectWatcher(RopHive::IOWorker& worker,
 
 } // namespace RopHive::Windows
 
-#endif // defined(_WIN32) or defined(_WIN64)
+#endif // _WIN32
 
 #endif // _ROP_PLATFORM_WINDOWS_NETWORK_WATCHER_TCP_CONNECT_WATCHER_H
