@@ -1,13 +1,16 @@
 #include "tcp_connection_watcher.h"
 
-#if defined(_WIN32) or defined(_WIN64)
+#ifdef _WIN32
+
+#include <algorithm>
+#include <cstdint>
+#include <stdexcept>
+#include <string_view>
+#include <utility>
+#include <vector>
 
 #include <winsock2.h>
 #include <ws2tcpip.h>
-#include <mswsock.h>
-#include <cerrno>
-#include <utility>
-#include <vector>
 
 #include "../../schedule/iocp_backend.h"
 #include "tcp_socket_common.h"
@@ -47,9 +50,10 @@ public:
                                         option_.send_buf_bytes);
     TcpDetail::applyLingerIfConfigured(fd_, option_.linger_sec);
 
-    source_ = std::make_shared<RopHive::Windows::IocpHandleCompletionEventSource>(
-        reinterpret_cast<HANDLE>(fd_), fd_,
-        [this](const IocpRawEvent& event) { onCompletion(event); });
+    source_ =
+        std::make_shared<RopHive::Windows::IocpHandleCompletionEventSource>(
+            reinterpret_cast<HANDLE>(fd_), static_cast<ULONG_PTR>(fd_),
+            [this](const IocpRawEvent &event) { onCompletion(event); });
   }
 
   ~IocpTcpConnectionWatcher() override {
@@ -85,31 +89,38 @@ public:
     const size_t limit =
         std::min(option_.max_write_bytes_per_tick, data.size());
 
-    // best-effort synchronous send (non-overlapped)
-    size_t total = 0;
-    while (total < limit) {
-      const int to_send = static_cast<int>(std::min(size_t(INT_MAX), limit - total));
-      const int n = ::send(fd_, data.data() + total, to_send, 0);
-      if (n > 0) {
-        total += static_cast<size_t>(n);
-        continue;
-      }
-      if (n == SOCKET_ERROR) {
-        const int err = WSAGetLastError();
-        if (err == WSAEWOULDBLOCK) {
-          want_send_ready_ = true;
-          res.would_block = true;
-          break;
-        }
+    // IOCP: treat a concurrent send pipeline as \"busy\". When busy, the caller
+    // should wait for OnSendReady then try again.
+    if (sending_) {
+      want_send_ready_ = true;
+      res.would_block = true;
+      return res;
+    }
+
+    send_buf_.assign(data.begin(),
+                     data.begin() + static_cast<ptrdiff_t>(limit));
+
+    send_ov_ = {};
+    WSABUF wsabuf{};
+    wsabuf.buf = send_buf_.data();
+    wsabuf.len = static_cast<ULONG>(send_buf_.size());
+
+    sending_ = true;
+    const int rc = ::WSASend(fd_, &wsabuf, 1, nullptr, 0, &send_ov_, nullptr);
+    if (rc == SOCKET_ERROR) {
+      const int err = ::WSAGetLastError();
+      if (err != WSA_IO_PENDING) {
+        sending_ = false;
+        send_buf_.clear();
         res.err = err;
         if (on_error_)
           on_error_(err);
         closeNow();
-        res.n = total;
         return res;
       }
     }
-    res.n = total;
+
+    res.n = send_buf_.size();
     return res;
   }
 
@@ -126,15 +137,16 @@ private:
     if (fd_ == INVALID_SOCKET || receiving_)
       return;
 
-    recv_overlapped_ = {};
-    WSABUF wsabuf;
+    recv_ov_ = {};
+    WSABUF wsabuf{};
     wsabuf.buf = in_buf_.data();
     wsabuf.len = static_cast<ULONG>(in_buf_.size());
 
     DWORD flags = 0;
-    const int rc = WSARecv(fd_, &wsabuf, 1, nullptr, &flags, &recv_overlapped_, nullptr);
+    const int rc =
+        ::WSARecv(fd_, &wsabuf, 1, nullptr, &flags, &recv_ov_, nullptr);
     if (rc == SOCKET_ERROR) {
-      const int err = WSAGetLastError();
+      const int err = ::WSAGetLastError();
       if (err != WSA_IO_PENDING) {
         if (on_error_)
           on_error_(err);
@@ -145,35 +157,77 @@ private:
     receiving_ = true;
   }
 
-  void onCompletion(const IocpRawEvent& event) {
-    if (fd_ == INVALID_SOCKET)
+  void onCompletion(const IocpRawEvent &event) {
+    if (fd_ == INVALID_SOCKET || closed_)
+      return;
+    if (event.overlapped == nullptr)
       return;
 
-    if (event.error) {
+    if (event.overlapped == &recv_ov_) {
+      onRecvComplete();
+      return;
+    }
+    if (event.overlapped == &send_ov_) {
+      onSendComplete();
+      return;
+    }
+  }
+
+  void onRecvComplete() {
+    receiving_ = false;
+
+    DWORD transferred = 0;
+    DWORD flags = 0;
+    const BOOL ok = ::WSAGetOverlappedResult(
+        fd_, reinterpret_cast<LPWSAOVERLAPPED>(&recv_ov_), &transferred, FALSE,
+        &flags);
+    if (!ok) {
+      const int err = ::WSAGetLastError();
       if (on_error_)
-        on_error_((int)event.error);
+        on_error_(err);
       closeNow();
       return;
     }
 
-    // Check which overlapped operation completed
-    if (&recv_overlapped_ == event.overlapped) {
-      handleRecvComplete(event.bytes);
-      receiving_ = false;
-      if (!closed_)
-        startRecv();
-    }
-  }
-
-  void handleRecvComplete(DWORD bytes) {
-    if (bytes == 0) {
+    if (transferred == 0) {
       peer_closed_ = true;
       closeNow();
       return;
     }
 
-    if (on_recv_)
-      on_recv_(std::string_view(in_buf_.data(), static_cast<size_t>(bytes)));
+    if (on_recv_) {
+      on_recv_(
+          std::string_view(in_buf_.data(), static_cast<size_t>(transferred)));
+    }
+
+    if (!closed_)
+      startRecv();
+  }
+
+  void onSendComplete() {
+    sending_ = false;
+
+    DWORD transferred = 0;
+    DWORD flags = 0;
+    const BOOL ok = ::WSAGetOverlappedResult(
+        fd_, reinterpret_cast<LPWSAOVERLAPPED>(&send_ov_), &transferred, FALSE,
+        &flags);
+    if (!ok) {
+      const int err = ::WSAGetLastError();
+      if (on_error_)
+        on_error_(err);
+      closeNow();
+      return;
+    }
+
+    (void)transferred;
+    send_buf_.clear();
+
+    if (want_send_ready_ && !closed_) {
+      want_send_ready_ = false;
+      if (on_send_ready_)
+        on_send_ready_();
+    }
   }
 
   void closeNow() {
@@ -200,9 +254,13 @@ private:
   bool want_send_ready_{false};
   bool closed_{false};
   bool receiving_{false};
+  bool sending_{false};
 
   std::vector<char> in_buf_;
-  OVERLAPPED recv_overlapped_{};
+  OVERLAPPED recv_ov_{};
+
+  std::vector<char> send_buf_;
+  OVERLAPPED send_ov_{};
 
   std::shared_ptr<RopHive::Windows::IocpHandleCompletionEventSource> source_;
 };
@@ -223,6 +281,7 @@ createIocpTcpConnectionWatcher(
       on_error(WSAEBADF);
     return {};
   }
+
   return std::make_shared<IocpTcpConnectionWatcher>(
       worker, std::move(option), fd, std::move(on_recv), std::move(on_close),
       std::move(on_error), std::move(on_send_ready));
@@ -230,4 +289,4 @@ createIocpTcpConnectionWatcher(
 
 } // namespace RopHive::Windows
 
-#endif // defined(_WIN32) or defined(_WIN64)
+#endif // _WIN32

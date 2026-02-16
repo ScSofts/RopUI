@@ -1,11 +1,11 @@
 #include "tcp_connect_watcher.h"
 
-#if defined(_WIN32) or defined(_WIN64)
+#ifdef _WIN32
+
+#include <utility>
+
 #include <winsock2.h>
 #include <ws2tcpip.h>
-#include <mswsock.h>
-#include <cerrno>
-#include <utility>
 
 #include "../../schedule/iocp_backend.h"
 #include "tcp_socket_common.h"
@@ -14,6 +14,63 @@ namespace RopHive::Windows {
 namespace {
 
 using namespace RopHive::Network;
+
+static bool bindIfNeededOrRequested(SOCKET fd, int family,
+                                    const IpEndpoint &remote,
+                                    const TcpConnectOption &option) {
+  (void)remote;
+
+  IpEndpoint bind_ep{};
+  if (option.local_bind.has_value()) {
+    bind_ep = *option.local_bind;
+  } else if (option.local_port != 0) {
+    if (family == AF_INET) {
+      IpEndpointV4 v4;
+      v4.ip = {0, 0, 0, 0};
+      v4.port = option.local_port;
+      bind_ep = v4;
+    } else if (family == AF_INET6) {
+      IpEndpointV6 v6;
+      v6.ip.fill(0);
+      v6.port = option.local_port;
+      v6.scope_id = 0;
+      bind_ep = v6;
+    } else {
+      ::WSASetLastError(WSAEAFNOSUPPORT);
+      return false;
+    }
+  } else {
+    // ConnectEx requires the socket to be bound before calling.
+    if (family == AF_INET) {
+      IpEndpointV4 v4;
+      v4.ip = {0, 0, 0, 0};
+      v4.port = 0;
+      bind_ep = v4;
+    } else if (family == AF_INET6) {
+      IpEndpointV6 v6;
+      v6.ip.fill(0);
+      v6.port = 0;
+      v6.scope_id = 0;
+      bind_ep = v6;
+    } else {
+      ::WSASetLastError(WSAEAFNOSUPPORT);
+      return false;
+    }
+  }
+
+  sockaddr_storage bind_ss{};
+  socklen_t bind_len = 0;
+  if (!TcpDetail::toSockaddr(bind_ep, bind_ss, bind_len)) {
+    ::WSASetLastError(WSAEINVAL);
+    return false;
+  }
+
+  if (::bind(fd, reinterpret_cast<sockaddr *>(&bind_ss), bind_len) != 0) {
+    return false;
+  }
+
+  return true;
+}
 
 class IocpTcpConnectWatcher final : public ITcpConnectWatcher {
 public:
@@ -36,16 +93,15 @@ public:
     createSocket();
     if (fd_ == INVALID_SOCKET)
       return;
-    startConnect();
-    if (fd_ == INVALID_SOCKET)
-      return;
 
-    source_ = std::make_shared<RopHive::Windows::IocpHandleCompletionEventSource>(
-        reinterpret_cast<HANDLE>(fd_),
-        fd_,
-        [this](const IocpRawEvent& event) { onCompletion(event); });
+    source_ =
+        std::make_shared<RopHive::Windows::IocpHandleCompletionEventSource>(
+            reinterpret_cast<HANDLE>(fd_), static_cast<ULONG_PTR>(fd_),
+            [this](const IocpRawEvent &event) { onCompletion(event); });
     attachSource(source_);
     attached_ = true;
+
+    startConnect();
   }
 
   void stop() override {
@@ -76,12 +132,7 @@ private:
     const int family = reinterpret_cast<sockaddr *>(&ss)->sa_family;
     fd_ = ::socket(family, SOCK_STREAM, IPPROTO_TCP);
     if (fd_ == INVALID_SOCKET) {
-      fail(WSAGetLastError());
-      return;
-    }
-
-    if (!TcpDetail::applyTcpNonBlock(fd_)) {
-      fail(WSAGetLastError());
+      fail(::WSAGetLastError());
       return;
     }
 
@@ -92,44 +143,24 @@ private:
         option_.keep_alive_interval_sec, option_.keep_alive_count);
     TcpDetail::applyBufSizeIfConfigured(fd_, option_.recv_buf_bytes,
                                         option_.send_buf_bytes);
-    // TcpDetail::applyLingerIfConfigured(fd_, option_.linger_sec);
 
-    if (option_.local_bind.has_value() || option_.local_port != 0) {
-      IpEndpoint bind_ep{};
-      if (option_.local_bind.has_value()) {
-        bind_ep = *option_.local_bind;
-      } else {
-        if (family == AF_INET) {
-          IpEndpointV4 v4;
-          v4.ip = {0, 0, 0, 0};
-          v4.port = option_.local_port;
-          bind_ep = v4;
-        } else if (family == AF_INET6) {
-          IpEndpointV6 v6;
-          v6.ip.fill(0);
-          v6.port = option_.local_port;
-          v6.scope_id = 0;
-          bind_ep = v6;
-        } else {
-          fail(WSAEAFNOSUPPORT);
-          return;
-        }
-      }
+    const auto [connect_ex, _] = TcpDetail::fetchConnectEx(fd_);
+    connect_ex_ = connect_ex;
+    if (!connect_ex_) {
+      fail(::WSAGetLastError());
+      return;
+    }
 
-      sockaddr_storage bind_ss{};
-      socklen_t bind_len = 0;
-      if (!TcpDetail::toSockaddr(bind_ep, bind_ss, bind_len)) {
-        fail(WSAEINVAL);
-        return;
-      }
-      if (::bind(fd_, reinterpret_cast<sockaddr *>(&bind_ss), bind_len) != 0) {
-        fail(WSAGetLastError());
-        return;
-      }
+    if (!bindIfNeededOrRequested(fd_, family, remote_, option_)) {
+      fail(::WSAGetLastError());
+      return;
     }
   }
 
   void startConnect() {
+    if (canceled_ || fd_ == INVALID_SOCKET)
+      return;
+
     sockaddr_storage ss{};
     socklen_t ss_len = 0;
     if (!TcpDetail::toSockaddr(remote_, ss, ss_len)) {
@@ -137,64 +168,52 @@ private:
       return;
     }
 
-    // Fetch ConnectEx function pointer
-    GUID guid_connect_ex = WSAID_CONNECTEX;
-    LPFN_CONNECTEX connect_ex = nullptr;
+    connect_ov_ = {};
     DWORD bytes = 0;
-    if (WSAIoctl(fd_, SIO_GET_EXTENSION_FUNCTION_POINTER,
-                 &guid_connect_ex, sizeof(guid_connect_ex),
-                 &connect_ex, sizeof(connect_ex),
-                 &bytes, nullptr, nullptr) != 0) {
-      fail(WSAGetLastError());
-      return;
-    }
-
-    overlapped_ = {};
-    BOOL rc = connect_ex(fd_, reinterpret_cast<sockaddr *>(&ss), ss_len,
-                         nullptr, 0, &bytes, &overlapped_);
-    if (!rc) {
-      const int err = WSAGetLastError();
+    const BOOL ok = connect_ex_(fd_, reinterpret_cast<sockaddr *>(&ss), ss_len,
+                                nullptr, 0, &bytes, &connect_ov_);
+    if (!ok) {
+      const int err = ::WSAGetLastError();
       if (err != WSA_IO_PENDING) {
         fail(err);
         return;
       }
     }
+    connecting_ = true;
   }
 
-  void onCompletion(const IocpRawEvent& event) {
-    if (canceled_)
-      return;
-    if (event.error) {
-      fail((int)event.error);
-      return;
-    }
-    checkConnectResult();
-  }
-
-  void checkConnectResult() {
+  void onCompletion(const IocpRawEvent &event) {
     if (canceled_ || fd_ == INVALID_SOCKET)
       return;
+    if (event.overlapped != &connect_ov_)
+      return;
 
-    int err = 0;
-    socklen_t len = sizeof(err);
-    if (::getsockopt(fd_, SOL_SOCKET, SO_ERROR,
-                     reinterpret_cast<char *>(&err), &len) != 0) {
-      fail(WSAGetLastError());
+    connecting_ = false;
+
+    DWORD transferred = 0;
+    DWORD flags = 0;
+    const BOOL ok = ::WSAGetOverlappedResult(
+        fd_, reinterpret_cast<LPWSAOVERLAPPED>(&connect_ov_), &transferred,
+        FALSE, &flags);
+    (void)transferred;
+    if (!ok) {
+      fail(::WSAGetLastError());
       return;
     }
-    if (err != 0) {
-      fail(err);
-      return;
-    }
 
-    auto stream = std::make_unique<WindowsTcpStream>(fd_, accept_buffer_dummy_);
+    (void)::setsockopt(fd_, SOL_SOCKET, SO_UPDATE_CONNECT_CONTEXT, nullptr, 0);
+
+    auto stream = std::make_unique<WindowsTcpStream>(fd_);
     fd_ = INVALID_SOCKET;
     stop();
+
     if (option_.fill_endpoints) {
-      // best-effort fill peer/local (Windows specific implementation)
+      TcpDetail::bestEffortFillEndpoints(stream->fd(), *stream);
     }
-    if (on_connected_)
+
+    if (on_connected_) {
       on_connected_(std::move(stream));
+    }
   }
 
   void fail(int err) {
@@ -212,11 +231,13 @@ private:
   OnError on_error_;
 
   SOCKET fd_{INVALID_SOCKET};
-  OVERLAPPED overlapped_{};
-  char accept_buffer_dummy_[2 * (sizeof(sockaddr_storage) + 32)] = {};
-
   bool attached_{false};
   bool canceled_{false};
+  bool connecting_{false};
+
+  LPFN_CONNECTEX connect_ex_{nullptr};
+  OVERLAPPED connect_ov_{};
+
   std::shared_ptr<RopHive::Windows::IocpHandleCompletionEventSource> source_;
 };
 
@@ -234,4 +255,4 @@ createIocpTcpConnectWatcher(IOWorker &worker, IpEndpoint remote,
 
 } // namespace RopHive::Windows
 
-#endif // defined(_WIN32) or defined(_WIN64)
+#endif // _WIN32
