@@ -86,11 +86,14 @@ int main(int argc, char** argv) {
     logger::setMinLevel(RopHive::SchedTrace::enabled() ? LogLevel::DEBUG : LogLevel::INFO);
 
     RopHive::Hive::Options opt;
-    opt.local_queue_capacity = 32768;
+    opt.local_queue_capacity = 2048;
     opt.local_batch_size = 16;
-    opt.global_batch_size = 16;
+    opt.global_batch_size = 64;
     opt.will_steal = steal_enabled;
     opt.victim_minimum_size = 36;
+    // Make steal attempts very likely to hit the busy victim (worker-0) so idle workers
+    // don't go to sleep permanently after a single unlucky steal round.
+    opt.ktries = 6;
 
     RopHive::Hive hive(opt); 
 
@@ -99,23 +102,6 @@ int main(int argc, char** argv) {
     }
 
     std::thread runner([&] { hive.run(); });
-
-    // Keep each worker waking up periodically (so it can reach the steal step).
-    for (int wid = 0; wid < workers; ++wid) {
-        hive.postToWorker(wid, [&, wid] {
-            auto* self = RopHive::IOWorker::currentWorker();
-            if (!self) return;
-
-            auto tick = std::make_shared<RopHive::Hive::TaskFn>();
-            *tick = [&, tick] {
-                if (hive.getExitRequested()) return;
-                auto* w = RopHive::IOWorker::currentWorker();
-                if (!w) return;
-                w->addTimer(RopHive::Hive::Clock::now() + 20ms, *tick);
-            };
-            self->addTimer(RopHive::Hive::Clock::now() + 20ms, *tick);
-        });
-    }
 
     std::atomic<int> remaining{tasks};
     std::atomic<bool> exit_scheduled{false};
@@ -126,6 +112,16 @@ int main(int argc, char** argv) {
     hive.postToWorker(0, [&] {
         auto* w = RopHive::IOWorker::currentWorker();
         if (!w) return;
+
+        // Wake other workers once after the victim has accumulated a backlog,
+        // so they can start stealing without periodic timer ticks.
+        const int kick_after = std::min(tasks, 8192);
+        auto kickOthersOnce = [&] {
+            for (int wid = 1; wid < workers; ++wid) {
+                hive.postToWorker(wid, [] {});
+            }
+        };
+
         for (int i = 0; i < tasks; ++i) {
             w->postToLocal([&] {
                 if (work_us > 0) {
@@ -139,11 +135,14 @@ int main(int argc, char** argv) {
                     }
                 }
             });
+
+            if (i + 1 == kick_after) {
+                kickOthersOnce();
+            }
         }
-        // Give other workers a window to steal before the victim starts consuming aggressively.
-        SCHED_TRACE_E(w->id(), ::RopHive::SchedTrace::Event::UserBlockBegin, "reason=seed_sleep ms=200");
-        std::this_thread::sleep_for(200ms);
-        SCHED_TRACE_E(w->id(), ::RopHive::SchedTrace::Event::UserBlockEnd, "reason=seed_sleep ms=200");
+        if (kick_after >= tasks) {
+            kickOthersOnce();
+        };
     });
 
     runner.join();
