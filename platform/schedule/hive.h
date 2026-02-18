@@ -31,8 +31,11 @@ public:
         size_t local_queue_capacity = 256;
         size_t global_batch_size = 16;
         size_t local_batch_size = 64;
-        size_t steal_batch_size = 4;
+        size_t victim_minimum_size = 32;
+        size_t steal_batch_factor = 2;
         size_t compute_batch_size = 4;
+        size_t ktries = 4;
+        bool will_steal = true;
     };
 
     Hive();

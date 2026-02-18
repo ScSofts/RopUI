@@ -89,7 +89,8 @@ int main(int argc, char** argv) {
     opt.local_queue_capacity = 32768;
     opt.local_batch_size = 16;
     opt.global_batch_size = 16;
-    opt.steal_batch_size = steal_enabled ? 1024 : 0;
+    opt.will_steal = steal_enabled;
+    opt.victim_minimum_size = 36;
 
     RopHive::Hive hive(opt); 
 

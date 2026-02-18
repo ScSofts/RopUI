@@ -93,12 +93,12 @@ void IOWorker::bind(Hive& hive, size_t worker_id) {
 
     SCHED_TRACE_E(worker_id_,
                  ::RopHive::SchedTrace::Event::WorkerBind,
-                 "backend=%d local_cap=%zu local_batch=%zu global_batch=%zu steal_batch=%zu",
+                 "backend=%d local_cap=%zu local_batch=%zu global_batch=%zu victim_minimum_size=%zu",
                  static_cast<int>(options_.io_backend),
                  options_.local_queue_capacity,
                  options_.local_batch_size,
                  options_.global_batch_size,
-                 options_.steal_batch_size);
+                 options_.victim_minimum_size);
 
     core_ = createEventLoopCore(options_.io_backend);
     if (!core_) {
@@ -406,11 +406,11 @@ bool IOWorker::stealOnce() {
     if (!hive_) return false;
     const size_t n = hive_->IOWorkerCount();
     if (n <= 1) return false;
-    if (options_.steal_batch_size == 0) return false;
+    if (options_.will_steal == 0) return false;
 
     std::uniform_int_distribution<size_t> dist(0, n - 1);
 
-    constexpr size_t kTries = 4;
+    size_t kTries = options_.ktries;
     for (size_t i = 0; i < kTries; ++i) {
         const size_t victim_id = dist(rng_);
         if (victim_id == worker_id_) {
@@ -419,12 +419,17 @@ bool IOWorker::stealOnce() {
         auto victim = hive_->workerAt(victim_id);
         if (!victim) continue;
 
-        const size_t steal_n = std::max<size_t>(1, options_.steal_batch_size);
+        // special steal count caculate
+        auto peer_size = victim->local_dq_.approxSize();
+        size_t steal_n = 0;
+        if (peer_size > std::max<size_t>(8, options_.victim_minimum_size))
+            steal_n = peer_size / options_.steal_batch_factor;
+
         size_t stole_cnt = 0;
         size_t victim_sz = 0;
 
         if (RopHive::SchedTrace::enabled())
-            victim_sz = victim->local_dq_.approxSize();
+            victim_sz = peer_size;
 
         if (RopHive::SchedTrace::enabled() && victim_sz != 0) {
             const auto st = victim->local_dq_.debugState();
@@ -572,6 +577,10 @@ void IOWorker::run() {
         if (harvestGlobalBatch()) {
             continue;
         }
+
+        if (!options_.will_steal)
+            continue;
+
         if (stealOnce()) {
             continue;
         }
